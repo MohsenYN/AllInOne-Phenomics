@@ -84,7 +84,8 @@ for (pkg in c(
 
 # ---- 5. Deployment ---------------------------------------------
 cat("\n=== 5/5  Deployment ===\n")
-install_if_missing("rsconnect")
+install_if_missing("rsconnect",
+  "shinymanager"  # login / authentication)
 
 # ---- Optional: FIELDimageR from GitHub -------------------------
 cat("\n=== Optional: FIELDimageR (GitHub) ===\n")

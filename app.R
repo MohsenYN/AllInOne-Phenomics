@@ -9,6 +9,74 @@
 #  Full Excel export with multiple sheets
 # ============================================================
 
+# ── Authentication ─────────────────────────────────────────────
+# Credentials are loaded from environment variables, NOT from code.
+# Set them in a local .env file (never committed to GitHub) or
+# in shinyapps.io / server environment variable settings.
+#
+# Local setup: create a file called .env in the app folder:
+#   ALLINONE_ADMIN_USER=mohsen
+#   ALLINONE_ADMIN_PASS=yourpassword
+#   ALLINONE_USER1=labmember1  ALLINONE_PASS1=pass1
+#   ALLINONE_USER2=user2       ALLINONE_PASS2=pass2
+#   (add as many ALLINONE_USERn / ALLINONE_PASSn pairs as needed)
+
+# Load .env file if it exists (local development)
+if (file.exists(".env")) {
+  env_lines <- readLines(".env", warn=FALSE)
+  env_lines <- env_lines[nzchar(trimws(env_lines)) & !grepl("^#", trimws(env_lines))]
+  for (line in env_lines) {
+    parts <- strsplit(line, "=", fixed=TRUE)[[1]]
+    if (length(parts) >= 2) {
+      key <- trimws(parts[1])
+      val <- trimws(paste(parts[-1], collapse="="))
+      do.call(Sys.setenv, setNames(list(val), key))
+    }
+  }
+}
+
+# Build credentials table from environment variables
+build_credentials <- function() {
+  rows <- list()
+
+  # Admin account
+  admin_user <- Sys.getenv("ALLINONE_ADMIN_USER", "admin")
+  admin_pass <- Sys.getenv("ALLINONE_ADMIN_PASS", "")
+
+  if (nchar(admin_pass) == 0) {
+    # No password set — app runs WITHOUT authentication (local dev mode)
+    return(NULL)
+  }
+
+  rows[[1]] <- data.frame(user=admin_user, password=admin_pass,
+                           admin=TRUE, stringsAsFactors=FALSE)
+
+  # Additional users: ALLINONE_USER1/PASS1, ALLINONE_USER2/PASS2, ...
+  i <- 1
+  repeat {
+    u <- Sys.getenv(paste0("ALLINONE_USER", i), "")
+    p <- Sys.getenv(paste0("ALLINONE_PASS", i), "")
+    if (nchar(u) == 0) break
+    rows[[length(rows)+1]] <- data.frame(user=u, password=p,
+                                          admin=FALSE, stringsAsFactors=FALSE)
+    i <- i + 1
+  }
+  do.call(rbind, rows)
+}
+
+# Load shinymanager if credentials are configured
+USE_AUTH <- FALSE
+creds    <- build_credentials()
+if (!is.null(creds) && requireNamespace("shinymanager", quietly=TRUE)) {
+  library(shinymanager)
+  USE_AUTH <- TRUE
+  message("✅ Authentication enabled for: ", paste(creds$user, collapse=", "))
+} else if (!is.null(creds)) {
+  message("⚠️  shinymanager not installed — run install_packages.R to enable auth.")
+} else {
+  message("ℹ️  No ALLINONE_ADMIN_PASS set — running without authentication (local mode).")
+}
+
 # ── Upload limit (4 GB local; shinyapps.io caps at ~1 GB) ────
 options(shiny.maxRequestSize = 4 * 1024^3)
 
@@ -372,7 +440,8 @@ select.form-control { position: relative; z-index: 10; }
 
 
 # ── UI ─────────────────────────────────────────────────────────
-ui <- dashboardPage(
+# ── Wrap UI with login screen if auth enabled ─────────────────
+raw_ui <- dashboardPage(
   skin = "red",
 
   # ─ Header ─
@@ -1457,8 +1526,52 @@ ui <- dashboardPage(
   ) # end dashboardBody
 ) # end dashboardPage
 
+# Apply login wrapper only when credentials are configured
+ui <- if (USE_AUTH) {
+  shinymanager::secure_app(
+    raw_ui,
+    enable_admin = TRUE,           # admin can add/remove users via browser
+    tags_top = tags$div(
+      style = "text-align:center;padding:20px 0 10px;",
+      tags$img(src="www/logo.png", height="80px",
+               style="filter:drop-shadow(0 2px 8px rgba(0,0,0,0.3));"),
+      tags$h3("AllInOne Phenomics",
+              style="color:#CC0000;font-family:'Georgia',serif;margin:8px 0 2px;"),
+      tags$p("Dry Bean Breeding & Computational Biology · University of Guelph",
+             style="color:#555;font-size:12px;margin:0;")
+    ),
+    background  = "linear-gradient(135deg,#1a1a2e,#0f3460,#CC0000)",
+    choose_language = FALSE
+  )
+} else {
+  raw_ui
+}
+
 # ── SERVER ─────────────────────────────────────────────────────
 server <- function(input, output, session) {
+
+  # ── Authenticate session if auth is enabled ──────────────────
+  if (USE_AUTH) {
+    res_auth <- shinymanager::secure_server(
+      check_credentials = shinymanager::check_credentials(creds)
+    )
+    # Log usage: who logged in and when
+    observe({
+      user <- tryCatch(res_auth()$user, error=function(e) "unknown")
+      if (!is.null(user) && nchar(user) > 0) {
+        log_file <- "usage_log.csv"
+        log_row  <- data.frame(
+          timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
+          user      = user,
+          tab       = tryCatch(isolate(input$sidebar), error=function(e) ""),
+          stringsAsFactors = FALSE
+        )
+        write.table(log_row, log_file, append=TRUE, sep=",",
+                    col.names=!file.exists(log_file), row.names=FALSE, quote=TRUE)
+      }
+    })
+  }
+
 
   rv <- reactiveValues(
     mosaic      = NULL,
@@ -2812,31 +2925,7 @@ server <- function(input, output, session) {
     }
   )
 
-  # Deployment-safe path: works locally AND on shinyapps.io
-  app_dir  <- tryCatch(getwd(), error = function(e) ".")
-  rgb_path <- file.path(app_dir, "Rstudio_RGB_drone_code_Sept_24_2025_updated.R")
-  ms_path  <- file.path(app_dir, "Rstudio_Multispectral_drone_code_Sept_24_2025_Updated.R")
-
-  output$dl_rgb_r <- downloadHandler(
-    filename = "Rstudio_RGB_drone_code.R",
-    content  = function(file) {
-      if (file.exists(rgb_path)) {
-        file.copy(rgb_path, file)
-      } else {
-        writeLines("# RGB script not found in app directory.\n# Place Rstudio_RGB_drone_code_Sept_24_2025_updated.R next to app.R", file)
-      }
-    }
-  )
-  output$dl_ms_r <- downloadHandler(
-    filename = "Rstudio_Multispectral_drone_code.R",
-    content = function(file) {
-      if (file.exists(ms_path)) {
-        file.copy(ms_path, file)
-      } else {
-        writeLines("# Multispectral script not found in app directory.\n# Place Rstudio_Multispectral_drone_code_Sept_24_2025_Updated.R next to app.R", file)
-      }
-    }
-  )
+  # (R script download handlers removed — not used in this version)
 
   output$plot_export_sel <- renderUI({
     selectInput("exp_plot","Plot to export:",

@@ -8,9 +8,9 @@ library(rsconnect)
 # ── Step 1: Set credentials ────────────────────────────────
 # Get from: https://www.shinyapps.io → Account → Tokens
 rsconnect::setAccountInfo(
-  name   = "allinone",   # <-- replace
-  token  = "CC80C06CF46ECE59F48753144F33C193",          # <-- replace
-  secret = "5v6OioHo5s9CWwbYqqmz5dwnz8IA29fg3LBUk5WR"          # <-- replace
+  name   = "YOUR_ACCOUNT_NAME",   # <-- replace
+  token  = "YOUR_TOKEN",          # <-- replace
+  secret = "YOUR_SECRET"          # <-- replace
 )
 
 # ── Step 2: Deploy (only app.R + DESCRIPTION + www/) ───────
