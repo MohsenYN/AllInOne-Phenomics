@@ -51,8 +51,8 @@ if (USE_AUTH) {
       "Public"
     ),
     password = c(
-      "01b9473f7b2196a5f4a1742590147a97421afff9f32f89bf4d0c955721db67ca", 
-      "4a77b160b56795298e26e4e45a9680761c750736336cb8d7880d11f68003141e", 
+      "01b9473f7b2196a5f4a1742590147a97421afff9f32f89bf4d0c955721db67ca",
+      "4a77b160b56795298e26e4e45a9680761c750736336cb8d7880d11f68003141e",
       "fb1f19e69d1ca0a166ce8228eb11515461474ed1cd24ee96f8cf190744eec5c1"
     ),
     admin    = c(TRUE, FALSE, FALSE),
@@ -1448,17 +1448,18 @@ raw_ui <- dashboardPage(
             textInput("rep_exp","Experiment / Season:", placeholder="e.g. Guelph 2024 Trial 1"),
             checkboxGroupInput("rep_sections","Include sections:",
               choices=c(
-                "Executive Summary"    = "summary",
-                "Data Overview"        = "overview",
-                "Field Heatmaps"       = "maps",
-                "Index Distributions"  = "dists",
-                "Summary Statistics"   = "stats",
-                "Correlation Matrix"   = "corr",
-                "PCA Biplot"           = "pca",
-                "Genotype Rankings"    = "rankings",
-                "ML Results"           = "ml"
+                "Executive Summary"          = "summary",
+                "Drone Mosaic & Field Layout" = "mosaic",
+                "Data Overview"              = "overview",
+                "Field Heatmaps"             = "maps",
+                "Index Distributions"        = "dists",
+                "Summary Statistics"         = "stats",
+                "Correlation Matrix"         = "corr",
+                "PCA Analysis"               = "pca",
+                "Genotype Rankings"          = "rankings",
+                "ML Results"                 = "ml"
               ),
-              selected = c("summary","overview","maps","dists","stats","corr","rankings")
+              selected = c("summary","mosaic","overview","maps","dists","stats","corr","rankings")
             ),
             tags$hr(),
             tags$p(style="font-size:12px;color:#666;",
@@ -1842,6 +1843,22 @@ server <- function(input, output, session) {
   observeEvent(input$load_data, {
     msgs <- c()
     withProgress(message="Loading...", value=0, {
+
+      # ── Reset ALL previous session data before loading new image ──
+      incProgress(0.05, "Clearing previous data…")
+      rv$mosaic       <- NULL
+      rv$masked       <- NULL
+      rv$shape        <- NULL
+      rv$meta         <- NULL
+      rv$merged       <- NULL
+      rv$idx_ras      <- NULL
+      rv$extracted    <- NULL
+      rv$pca_obj      <- NULL
+      rv$ml_results   <- NULL
+      rv$corner_pts   <- list()
+      rv$cancel_map   <- FALSE
+      rv$report_path  <- NULL
+      rv$report_ready <- FALSE
 
       if (!is.null(input$tif_file)) {
         incProgress(0.3, "Loading raster…")
@@ -4378,57 +4395,72 @@ server <- function(input, output, session) {
     rv$report_ready <- FALSE
     rv$report_path  <- NULL
 
-    withProgress(message="Building full report…", value=0, {
-      secs  <- input$rep_sections
-      df    <- rv$merged
-      nc    <- if (!is.null(df)) names(df)[sapply(df, is.numeric)] else character(0)
+    withProgress(message="Building full report...", value=0, {
+      secs <- input$rep_sections
+      df   <- rv$merged
+      nc   <- if (!is.null(df)) names(df)[sapply(df, is.numeric)] else character(0)
 
-      # ── CSS ──────────────────────────────────────────────────
+      # ── CSS ───────────────────────────────────────────────────
       css <- '
-        @import url("https://fonts.googleapis.com/css2?family=Source+Sans+Pro:wght@300;400;600&display=swap");
+        @import url("https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Source+Sans+Pro:wght@300;400;600&display=swap");
         *{box-sizing:border-box;}
-        body{font-family:"Source Sans Pro",sans-serif;max-width:1150px;margin:auto;
-             padding:28px 24px;background:#f4f3ef;color:#222;line-height:1.65;}
-        .cover{background:linear-gradient(135deg,#1a1a2e,#0f3460,#CC0000);
-               border-radius:12px;padding:36px 40px;color:#fff;margin-bottom:28px;}
-        .cover h1{font-size:28px;margin:0 0 8px;letter-spacing:0.3px;}
-        .cover p{margin:4px 0;font-size:14px;opacity:0.85;}
-        .cover a{color:#FFC72C;text-decoration:none;font-weight:600;}
-        h2{color:#1a1a2e;border-left:5px solid #CC0000;padding-left:12px;
-           margin-top:36px;font-size:19px;}
-        h3{color:#2d6a4f;font-size:15px;margin-top:20px;}
-        .note{background:#fffde7;border-left:4px solid #FFC72C;border-radius:0 6px 6px 0;
-              padding:12px 16px;margin:14px 0;font-size:13px;color:#555;}
+        body{font-family:"Source Sans Pro",sans-serif;max-width:1200px;margin:auto;
+             padding:32px 28px;background:#f5f4f0;color:#222;line-height:1.7;}
+        .cover{background:linear-gradient(135deg,#0d0d1a 0%,#1a1a2e 40%,#0f3460 70%,#8B0000 100%);
+               border-radius:14px;padding:40px 44px;color:#fff;margin-bottom:32px;
+               box-shadow:0 8px 40px rgba(0,0,0,0.35);}
+        .cover h1{font-family:"Playfair Display",serif;font-size:30px;margin:0 0 10px;letter-spacing:0.3px;}
+        .cover p{margin:5px 0;font-size:13.5px;opacity:0.85;}
+        .cover a{color:#FFC72C;text-decoration:none;font-weight:700;}
+        .cover .meta-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:18px;}
+        .cover .meta-item{background:rgba(255,255,255,0.1);border-radius:8px;padding:8px 14px;font-size:12.5px;}
+        .cover .meta-item b{color:#FFC72C;display:block;font-size:10px;opacity:0.8;text-transform:uppercase;letter-spacing:0.5px;margin-bottom:2px;}
+        h2{font-family:"Playfair Display",serif;color:#1a1a2e;border-left:5px solid #CC0000;
+           padding-left:14px;margin-top:40px;font-size:20px;}
+        h3{color:#0f3460;font-size:15px;margin-top:24px;font-weight:700;}
+        h4{color:#2d6a4f;font-size:13.5px;margin-top:16px;font-weight:700;}
+        p{margin:8px 0;font-size:13.5px;}
+        .note{background:#fffde7;border-left:4px solid #FFC72C;border-radius:0 8px 8px 0;
+              padding:13px 18px;margin:16px 0;font-size:13px;color:#555;}
         .note b{color:#856404;}
-        .info{background:#e8f5e9;border-left:4px solid #2d6a4f;border-radius:0 6px 6px 0;
-              padding:12px 16px;margin:14px 0;font-size:13px;color:#2d4a3e;}
-        .warn{background:#fff3cd;border-left:4px solid #e6a800;border-radius:0 6px 6px 0;
-              padding:12px 16px;margin:14px 0;font-size:13px;color:#856404;}
-        .card{background:#fff;border-radius:8px;padding:18px 22px;
-              margin:14px 0;box-shadow:0 2px 10px rgba(0,0,0,.08);}
+        .info{background:#e8f5e9;border-left:4px solid #2d6a4f;border-radius:0 8px 8px 0;
+              padding:13px 18px;margin:16px 0;font-size:13px;color:#1b4332;}
+        .warn{background:#fff3cd;border-left:4px solid #e6a800;border-radius:0 8px 8px 0;
+              padding:13px 18px;margin:16px 0;font-size:13px;color:#856404;}
+        .card{background:#fff;border-radius:10px;padding:20px 24px;
+              margin:16px 0;box-shadow:0 3px 14px rgba(0,0,0,0.09);}
         .stat-badge{display:inline-block;background:#1a1a2e;color:#FFC72C;
-                    border-radius:20px;padding:4px 14px;font-size:12px;
+                    border-radius:20px;padding:4px 14px;font-size:11.5px;
                     font-weight:600;margin:3px;}
-        .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:14px 0;}
-        .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin:14px 0;}
-        .metric-box{background:#fff;border-radius:8px;padding:14px 16px;
-                    box-shadow:0 2px 8px rgba(0,0,0,.07);text-align:center;}
-        .metric-box .val{font-size:24px;font-weight:700;color:#CC0000;}
-        .metric-box .lbl{font-size:11px;color:#888;margin-top:4px;}
+        .three-col{display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;margin:16px 0;}
+        .four-col{display:grid;grid-template-columns:1fr 1fr 1fr 1fr;gap:12px;margin:16px 0;}
+        .two-col{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin:16px 0;}
+        .metric-box{background:#fff;border-radius:10px;padding:16px;
+                    box-shadow:0 2px 10px rgba(0,0,0,.08);text-align:center;
+                    border-top:3px solid #CC0000;}
+        .metric-box .val{font-size:26px;font-weight:700;color:#CC0000;}
+        .metric-box .lbl{font-size:11px;color:#888;margin-top:4px;text-transform:uppercase;letter-spacing:0.3px;}
         table{border-collapse:collapse;width:100%;font-size:13px;background:#fff;
-              border-radius:6px;overflow:hidden;box-shadow:0 1px 6px rgba(0,0,0,.07);}
-        th{background:#1a1a2e;color:#FFC72C;padding:9px 14px;text-align:left;font-weight:600;}
-        td{padding:7px 14px;border-bottom:1px solid #eee;}
-        tr:nth-child(even) td{background:#f9f8f5;}
-        .good{color:#1b4332;font-weight:600;} .caution{color:#856404;font-weight:600;}
-        .bad{color:#CC0000;font-weight:600;}
-        .section-divider{border:none;border-top:2px solid #eee;margin:32px 0;}
-        .toc a{display:block;padding:4px 0;color:#0f3460;text-decoration:none;font-size:14px;}
-        .toc a:hover{color:#CC0000;}
-        .footer{margin-top:48px;padding-top:16px;border-top:2px solid #ddd;
+              border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,.08);margin:12px 0;}
+        th{background:#1a1a2e;color:#FFC72C;padding:10px 14px;text-align:left;font-weight:700;font-size:12px;letter-spacing:0.3px;}
+        td{padding:8px 14px;border-bottom:1px solid #eee;font-size:13px;}
+        tr:nth-child(even) td{background:#fafaf8;}
+        tr:hover td{background:#fff8e1;}
+        .good{color:#1b4332;font-weight:700;} .caution{color:#856404;font-weight:700;}
+        .bad{color:#CC0000;font-weight:700;}
+        .section-divider{border:none;border-top:2px solid #e0ddd8;margin:36px 0;}
+        .toc{background:#fff;border-radius:10px;padding:16px 24px;box-shadow:0 2px 10px rgba(0,0,0,.07);}
+        .toc a{display:inline-block;padding:5px 12px;margin:3px;color:#0f3460;
+               text-decoration:none;font-size:13.5px;border-radius:6px;
+               background:#f0f0f0;transition:background 0.2s;}
+        .toc a:hover{background:#CC0000;color:#fff;}
+        .fig-wrap{text-align:center;margin:18px 0;}
+        .fig-wrap img{max-width:100%;border-radius:8px;box-shadow:0 4px 16px rgba(0,0,0,.15);}
+        .fig-cap{font-size:11.5px;color:#666;margin-top:6px;font-style:italic;text-align:center;}
+        .idx-desc{font-size:12px;color:#888;font-style:italic;}
+        .footer{margin-top:56px;padding-top:18px;border-top:2px solid #ddd;
                 font-size:11.5px;color:#999;text-align:center;}
-        .page-break{page-break-after:always;}
-        @media print{.cover{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
+        @media print{.cover,.metric-box,.card{-webkit-print-color-adjust:exact;print-color-adjust:exact;}}
       '
 
       lines <- c(
@@ -4439,522 +4471,812 @@ server <- function(input, output, session) {
         '</head><body>'
       )
 
-      # ── Cover Page ───────────────────────────────────────────
-      incProgress(0.03, "Cover…")
-      exp_txt <- if (nchar(trimws(input$rep_exp)) > 0) input$rep_exp else "Field Trial Analysis"
-      has_raster <- !is.null(rv$mosaic); has_grid <- !is.null(rv$shape)
-      has_idx    <- !is.null(rv$idx_ras); has_data  <- !is.null(df)
+      # ── COVER PAGE ────────────────────────────────────────────
+      incProgress(0.03, "Building cover page...")
+      has_raster <- !is.null(rv$mosaic)
+      has_grid   <- !is.null(rv$shape)
+      has_idx    <- !is.null(rv$idx_ras)
+      has_data   <- !is.null(df)
       n_plots    <- if (has_grid) nrow(rv$shape) else 0
-      n_idx      <- if (has_idx) length(names(rv$idx_ras)) else 0
+      n_idx      <- if (has_idx)  length(names(rv$idx_ras)) else 0
+      n_rows_dat <- if (has_data) nrow(df) else 0
+      exp_txt    <- if (nchar(trimws(input$rep_exp)) > 0) input$rep_exp else "Field Trial Analysis"
+      cam_txt    <- tryCatch(if (input$camera_type=="rgb") "RGB (3-band)" else "Multispectral (5-band)", error=function(e)"—")
 
       lines <- c(lines,
         '<div class="cover">',
         sprintf('<h1>%s</h1>', htmltools::htmlEscape(input$rep_title)),
-        sprintf('<p>📍 Experiment: <b>%s</b></p>', htmltools::htmlEscape(exp_txt)),
-        sprintf('<p>👤 Author: <b>%s</b></p>', htmltools::htmlEscape(input$rep_author)),
-        sprintf('<p>📅 Generated: <b>%s</b></p>', format(Sys.time(), "%B %d, %Y at %H:%M")),
-        '<p style="margin-top:12px;">🌐 <a href="https://www.uogbeans.com">www.uogbeans.com</a>',
-        ' &nbsp;·&nbsp; University of Guelph Dry Bean Breeding & Computational Biology</p>',
+        '<p style="font-size:15px;opacity:0.9;margin-bottom:4px;">',
+        'Drone Image Analysis Report &mdash; High-Throughput Plant Phenotyping</p>',
+        '<div class="meta-grid">',
+        sprintf('<div class="meta-item"><b>Experiment</b>%s</div>', htmltools::htmlEscape(exp_txt)),
+        sprintf('<div class="meta-item"><b>Author / PI</b>%s</div>', htmltools::htmlEscape(input$rep_author)),
+        sprintf('<div class="meta-item"><b>Generated</b>%s</div>', format(Sys.time(),"%B %d, %Y at %H:%M")),
+        sprintf('<div class="meta-item"><b>Camera Type</b>%s</div>', cam_txt),
+        sprintf('<div class="meta-item"><b>Total Plots</b>%s</div>', if(n_plots>0) as.character(n_plots) else "—"),
+        sprintf('<div class="meta-item"><b>Indices Calculated</b>%s</div>', if(n_idx>0) as.character(n_idx) else "—"),
         '</div>',
-
-        # Key metrics strip
-        '<div class="three-col">',
-        sprintf('<div class="metric-box"><div class="val">%s</div><div class="lbl">Total Plots</div></div>',
+        '<p style="margin-top:18px;font-size:12px;opacity:0.7;">',
+        '<a href="https://www.uogbeans.com">www.uogbeans.com</a>',
+        ' &nbsp;&middot;&nbsp; Dry Bean Breeding &amp; Computational Biology',
+        ' &nbsp;&middot;&nbsp; University of Guelph, Canada</p>',
+        '</div>',
+        # Key metric strip
+        '<div class="four-col">',
+        sprintf('<div class="metric-box"><div class="val">%s</div><div class="lbl">Plots Analysed</div></div>',
           if(n_plots>0) n_plots else "—"),
         sprintf('<div class="metric-box"><div class="val">%s</div><div class="lbl">Indices Calculated</div></div>',
           if(n_idx>0) n_idx else "—"),
-        sprintf('<div class="metric-box"><div class="val">%s</div><div class="lbl">Data Rows</div></div>',
+        sprintf('<div class="metric-box"><div class="val">%s</div><div class="lbl">Data Records</div></div>',
           if(has_data) nrow(df) else "—"),
+        sprintf('<div class="metric-box"><div class="val">%s</div><div class="lbl">Bands</div></div>',
+          if(has_raster) terra::nlyr(rv$mosaic) else "—"),
         '</div>'
       )
 
-      # ── Table of Contents ────────────────────────────────────
-      sec_names <- c(
-        summary="1. Executive Summary", overview="2. Data Overview & Statistics",
-        maps="3. Field Heatmaps", dists="4. Index Distributions",
-        stats="5. Summary Statistics Table", corr="6. Correlation Analysis",
-        pca="7. PCA & Variance Analysis", rankings="8. Genotype Rankings",
-        ml="9. Machine Learning Results"
+      # ── TABLE OF CONTENTS ────────────────────────────────────
+      sec_map <- c(
+        summary="1. Executive Summary", mosaic="2. Drone Mosaic & Field Layout",
+        overview="3. Data Overview", maps="4. Field Heatmaps",
+        dists="5. Index Distributions", stats="6. Summary Statistics",
+        corr="7. Correlation Analysis", pca="8. PCA & Variance",
+        rankings="9. Genotype Rankings", ml="10. Machine Learning"
       )
-      lines <- c(lines,
-        '<h2>Contents</h2>',
-        '<div class="card toc">',
-        sapply(intersect(names(sec_names), secs), function(s)
-          sprintf('<a href="#sec_%s">%s</a>', s, sec_names[s])),
-        '</div>'
-      )
+      lines <- c(lines, '<h2 style="margin-top:28px;">Contents</h2>',
+        '<div class="toc">',
+        sapply(intersect(names(sec_map), secs), function(s)
+          sprintf('<a href="#sec_%s">%s</a>', s, sec_map[s])),
+        '</div>')
 
-      # ── 1. Executive Summary ─────────────────────────────────
+      # ════════════════════════════════════════════════════════
+      # 1. EXECUTIVE SUMMARY
+      # ════════════════════════════════════════════════════════
       if ("summary" %in% secs) {
-        incProgress(0.05, "Executive summary…")
-        camera_txt <- tryCatch(
-          if (input$camera_type == "rgb") "RGB (3-band)" else "Multispectral (5-band: B/G/R/RE/NIR)",
-          error=function(e) "Unknown")
-
+        incProgress(0.05, "Executive summary...")
         lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_summary">1. Executive Summary</h2>',
+          '<hr class="section-divider">',
+          '<h2 id="sec_summary">1. Executive Summary</h2>',
           '<div class="info">',
-          '<b>About this report:</b> This document summarises the drone image analysis ',
-          'performed using the Dry Bean Drone Analytics Platform developed by the ',
-          'Dry Bean Breeding &amp; Computational Biology Program at the University of Guelph. ',
-          'The platform supports RGB and multispectral drone imagery for high-throughput ',
-          'phenotyping, including vegetation index calculation, spatial field heatmaps, ',
-          'genotype ranking, and machine learning-based trait prediction.',
-          '</div>',
+          '<b>About this report:</b> This document presents results from drone-based high-throughput ',
+          'phenotyping of a dry bean field trial, conducted using the <b>AllInOne Phenomics</b> platform ',
+          'developed by the Dry Bean Breeding &amp; Computational Biology Program, University of Guelph. ',
+          'The platform processes RGB and multispectral drone imagery to extract vegetation indices, ',
+          'generate spatial field heatmaps, perform statistical analysis, rank genotypes, and apply ',
+          'machine learning models for trait prediction.</div>',
 
-          '<div class="card">',
-          '<h3>Pipeline Status</h3>',
-          '<table><tr><th>Component</th><th>Status</th><th>Details</th></tr>',
-          sprintf('<tr><td>Drone Mosaic</td><td class="%s">%s</td><td>%s</td></tr>',
+          '<div class="card"><h3>Pipeline Status</h3>',
+          '<table><tr><th>Component</th><th>Status</th><th>Details</th><th>Notes</th></tr>',
+          sprintf('<tr><td><b>Drone Mosaic</b></td><td class="%s">%s</td><td>%s</td><td>%s</td></tr>',
             if(has_raster)"good" else "bad",
             if(has_raster)"✅ Loaded" else "❌ Not loaded",
             if(has_raster) paste0(terra::nlyr(rv$mosaic)," bands · ",
-              format(nrow(rv$mosaic)*ncol(rv$mosaic), big.mark=",")," pixels · ",
-              tryCatch(terra::crs(rv$mosaic,describe=TRUE)$name[1],error=function(e)"CRS unknown"))
-            else "Upload a .tif file in the Data Upload tab"),
-          sprintf('<tr><td>Camera Type</td><td class="good">%s</td><td>Band scaling applied</td></tr>',
-            camera_txt),
-          sprintf('<tr><td>Plot Grid</td><td class="%s">%s</td><td>%s</td></tr>',
+              format(nrow(rv$mosaic)*ncol(rv$mosaic),big.mark=",")," total pixels") else "—",
+            if(has_raster) tryCatch(
+              paste0("CRS: ", terra::crs(rv$mosaic,describe=TRUE)$name[1]),
+              error=function(e)"CRS unknown") else "Upload .tif in Data Upload tab"),
+          sprintf('<tr><td><b>Camera Type</b></td><td class="good">%s</td><td>Band scaling applied</td><td>Reflectance values 0–1 required for index accuracy</td></tr>', cam_txt),
+          sprintf('<tr><td><b>Plot Grid</b></td><td class="%s">%s</td><td>%s</td><td>%s</td></tr>',
             if(has_grid)"good" else "caution",
             if(has_grid)"✅ Defined" else "⚠️ Not set",
-            if(has_grid) paste0(n_plots," plots defined") else "Generate or upload a plot grid"),
-          sprintf('<tr><td>Vegetation Indices</td><td class="%s">%s</td><td>%s</td></tr>',
+            if(has_grid) paste0(n_plots," plots") else "—",
+            if(has_grid) paste0(tryCatch(input$nrows,error=function(e)"?")," rows × ",
+              tryCatch(input$ncols,error=function(e)"?")," cols") else "Generate grid in Plot Grid tab"),
+          sprintf('<tr><td><b>Vegetation Indices</b></td><td class="%s">%s</td><td>%s</td><td>%s</td></tr>',
             if(has_idx)"good" else "bad",
             if(has_idx)"✅ Calculated" else "❌ Not calculated",
-            if(has_idx) paste0(n_idx," indices: ", paste(head(names(rv$idx_ras),6),collapse=", "),
-                               if(n_idx>6) paste0("… +",n_idx-6," more") else "")
-            else "Select indices in the Vegetation Indices tab"),
-          sprintf('<tr><td>Merged Dataset</td><td class="%s">%s</td><td>%s</td></tr>',
+            if(has_idx) paste0(n_idx," indices calculated") else "—",
+            if(has_idx) paste(head(names(rv$idx_ras),5),collapse=", ") else "Use Vegetation Indices tab"),
+          sprintf('<tr><td><b>Merged Dataset</b></td><td class="%s">%s</td><td>%s</td><td>%s</td></tr>',
             if(has_data)"good" else "bad",
             if(has_data)"✅ Ready" else "❌ Not available",
-            if(has_data) paste0(nrow(df)," rows × ",ncol(df)," columns") else "—"),
+            if(has_data) paste0(nrow(df)," rows × ",ncol(df)," columns") else "—",
+            if(has_data) {
+              meta_c <- names(df)[!names(df) %in% c(nc, "PlotID")]
+              if(length(meta_c)>0) paste("Metadata:",paste(head(meta_c,3),collapse=", ")) else "Index data only"
+            } else "Load data and calculate indices"),
           '</table></div>',
-
-          '<div class="note"><b>📝 Note:</b> Vegetation indices are calculated on reflectance-scaled ',
-          'band values (0–1). The auto-detect scaling divides raw DN values by 255 (8-bit RGB), ',
-          '10,000 (MicaSense/ENVI), or 65,535 (16-bit) depending on the sensor. Always verify the ',
-          'scaling is correct for your sensor in the Camera Configuration panel.</div>'
+          '<div class="note"><b>📝 Methodology note:</b> Vegetation indices are calculated on ',
+          'reflectance-scaled band values (range 0–1). Band scaling is auto-detected from the ',
+          'maximum pixel value: ÷255 for 8-bit RGB cameras, ÷10,000 for MicaSense/ENVI format, ',
+          'or ÷65,535 for 16-bit sensors. Always verify this matches your sensor specification. ',
+          'Plot-level values represent the mean of all pixels within each plot polygon.</div>'
         )
       }
 
-      # ── 2. Data Overview ─────────────────────────────────────
+      # ════════════════════════════════════════════════════════
+      # 2. DRONE MOSAIC & FIELD LAYOUT (with images!)
+      # ════════════════════════════════════════════════════════
+      if ("mosaic" %in% secs) {
+        incProgress(0.07, "Rendering field images...")
+        lines <- c(lines,
+          '<hr class="section-divider">',
+          '<h2 id="sec_mosaic">2. Drone Mosaic &amp; Field Layout</h2>',
+          '<p>The drone mosaic is the georeferenced orthophoto produced from drone imagery. ',
+          'It serves as the spatial foundation for all analyses. Each plot polygon is overlaid ',
+          'on the mosaic to define the area from which index values are extracted.</p>'
+        )
+
+        # Original mosaic image
+        if (has_raster) {
+          b64_mosaic <- tryCatch({
+            base_to_b64({
+              r  <- rv$mosaic
+              b  <- get_bands()
+              if (terra::nlyr(r) >= 3) {
+                terra::plotRGB(r, r=b$r, g=b$g, b=b$b,
+                               main="Drone Mosaic — Original Image", stretch="lin",
+                               mar=c(2,2,2,2))
+              } else {
+                terra::plot(r[[1]], main="Drone Mosaic (Band 1)",
+                            col=viridis::viridis(256), mar=c(2,2,2,2))
+              }
+            }, w=1100, h=700)
+          }, error=function(e) NULL)
+          lines <- c(lines,
+            '<h3>Original Drone Mosaic</h3>',
+            img_html(b64_mosaic,
+              paste0("Figure 2.1: Drone mosaic orthophoto. ",
+                     terra::nlyr(rv$mosaic),"-band image · ",
+                     format(nrow(rv$mosaic)*ncol(rv$mosaic), big.mark=","), " pixels. ",
+                     "RGB composite displayed. Spatial coordinate reference: ",
+                     tryCatch(terra::crs(rv$mosaic,describe=TRUE)$name[1],error=function(e)"unknown")))
+          )
+        }
+
+        # Mosaic with grid overlay
+        if (has_raster && has_grid) {
+          b64_grid <- tryCatch({
+            base_to_b64({
+              r   <- rv$mosaic
+              b   <- get_bands()
+              shp <- rv$shape
+              if (terra::nlyr(r) >= 3) {
+                terra::plotRGB(r, r=b$r, g=b$g, b=b$b,
+                               main=paste0("Field Layout — ", n_plots, " Plots  |  Plot 1 = top-left, left→right, top→bottom"),
+                               stretch="lin", mar=c(2,2,3,2))
+              } else {
+                terra::plot(r[[1]], main=paste0("Field Layout — ",n_plots," Plots"),
+                            col=viridis::viridis(256), mar=c(2,2,3,2))
+              }
+              # Draw plot grid
+              terra::plot(shp, add=TRUE, border="#FFC72C", lwd=0.7, col=NA)
+              # Label plots (limit to 300 for performance)
+              n_p  <- nrow(shp)
+              lidx <- if(n_p<=300) seq_len(n_p) else c(1, seq(5,n_p,by=max(1,floor(n_p/60))),n_p)
+              cents <- tryCatch(terra::centroids(shp[lidx,]), error=function(e) NULL)
+              if (!is.null(cents)) {
+                cx <- terra::crds(cents)[,1]; cy <- terra::crds(cents)[,2]
+                ids <- if("PlotID" %in% names(shp)) shp$PlotID[lidx] else lidx
+                cex_l <- if(n_p>200) 0.4 else if(n_p>100) 0.55 else 0.7
+                text(cx, cy, labels=ids, col="white",  cex=cex_l+0.1, font=2)
+                text(cx, cy, labels=ids, col="#FFC72C", cex=cex_l,    font=2)
+              }
+              # Highlight plot 1
+              p1 <- if("PlotID" %in% names(shp)) which(shp$PlotID==1) else 1
+              if (length(p1)) {
+                c1 <- tryCatch(terra::crds(terra::centroids(shp[p1,])),error=function(e)NULL)
+                if (!is.null(c1)) points(c1[1],c1[2],pch=21,bg="#CC0000",col="white",cex=2.5,lwd=2)
+              }
+              legend("bottomright", inset=0.01,
+                legend=c("Plot #1","Grid lines"),
+                pch=c(21,NA), lty=c(NA,1),
+                pt.bg=c("#CC0000",NA), col=c("white","#FFC72C"),
+                pt.cex=c(1.4,NA), lwd=c(NA,1.5),
+                bg="rgba(0,0,0,0.5)", text.col="white", cex=0.75, box.col=NA)
+            }, w=1100, h=700)
+          }, error=function(e) NULL)
+          lines <- c(lines,
+            '<h3>Field Grid Overlay</h3>',
+            '<p>The plot grid divides the field mosaic into individual experimental plots. ',
+            'Each numbered cell corresponds to one plot. Values are extracted by computing ',
+            'the mean pixel value within each polygon.</p>',
+            img_html(b64_grid,
+              paste0("Figure 2.2: Drone mosaic with plot grid overlay. ",
+                     n_plots, " plots defined. Gold grid lines = plot boundaries. ",
+                     "Red dot = Plot #1 (numbering starts top-left, proceeds left→right then top→bottom)."))
+          )
+
+          # Grid statistics
+          lines <- c(lines,
+            '<div class="card"><h4>Plot Grid Information</h4>',
+            '<div class="two-col">',
+            '<div>',
+            sprintf('<p><b>Total plots:</b> %d</p>', n_plots),
+            sprintf('<p><b>Rows × Columns:</b> %s × %s</p>',
+              tryCatch(input$nrows,error=function(e)"?"),
+              tryCatch(input$ncols,error=function(e)"?")),
+            sprintf('<p><b>Numbering:</b> Left to right, top to bottom (Plot 1 = top-left)</p>'),
+            '</div><div>',
+            sprintf('<p><b>Coordinate system:</b> %s</p>',
+              tryCatch(terra::crs(rv$mosaic,describe=TRUE)$name[1],error=function(e)"unknown")),
+            sprintf('<p><b>Mosaic resolution:</b> %s × %s pixels</p>',
+              nrow(rv$mosaic), ncol(rv$mosaic)),
+            sprintf('<p><b>Approx. pixels per plot:</b> %s</p>',
+              format(round(nrow(rv$mosaic)*ncol(rv$mosaic)/max(n_plots,1)),big.mark=",")),
+            '</div></div></div>'
+          )
+        }
+
+        # NDVI or first index raster view
+        if (has_idx) {
+          first_idx <- names(rv$idx_ras)[1]
+          b64_idx_r <- tryCatch({
+            base_to_b64({
+              lyr <- rv$idx_ras[[first_idx]]
+              terra::plot(lyr, main=paste("Vegetation Index Raster:", first_idx),
+                          col=RColorBrewer::brewer.pal(11,"RdYlGn"), mar=c(2,2,3,2))
+              if (has_grid) terra::plot(rv$shape, add=TRUE, border="white", lwd=0.4, col=NA)
+            }, w=900, h=600)
+          }, error=function(e) NULL)
+          lines <- c(lines,
+            sprintf('<h3>Vegetation Index Raster — %s</h3>', first_idx),
+            '<p>The index raster shows the spatial distribution of the first calculated index ',
+            'at full pixel resolution. White lines show the plot grid boundaries.</p>',
+            img_html(b64_idx_r,
+              paste0("Figure 2.3: ", first_idx, " raster with plot grid overlay. ",
+                     "Red = low values, Green = high values (RdYlGn colour scale)."))
+          )
+        }
+      }
+
+      # ════════════════════════════════════════════════════════
+      # 3. DATA OVERVIEW
+      # ════════════════════════════════════════════════════════
       if ("overview" %in% secs && has_data) {
-        incProgress(0.06, "Data overview…")
+        incProgress(0.04, "Data overview...")
         meta_cols <- names(df)[!names(df) %in% nc]
         lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_overview">2. Data Overview &amp; Statistics</h2>',
-          sprintf('<p>The merged dataset contains <b>%d plots</b> and <b>%d columns</b> ',
-                  nrow(df), ncol(df)),
-          sprintf('(%d numeric indices/bands, %d metadata columns).</p>', length(nc), length(meta_cols)),
+          '<hr class="section-divider">',
+          '<h2 id="sec_overview">3. Data Overview</h2>',
+          sprintf('<p>The merged dataset contains <b>%d plots</b>, <b>%d numeric indices/bands</b>, ',
+            nrow(df), length(nc)),
+          sprintf('and <b>%d metadata columns</b>. Each row represents one experimental plot.</p>', length(meta_cols)),
 
-          if (length(meta_cols) > 0) paste0(
-            '<div class="card"><b>Metadata columns:</b> ',
+          '<div class="card"><h4>Numeric indices available:</h4><p>',
+          paste(sapply(nc, function(col) sprintf('<span class="stat-badge">%s</span>', col)), collapse=" "),
+          '</p></div>',
+
+          if (length(meta_cols)>0) paste0(
+            '<div class="card"><h4>Metadata columns:</h4>',
+            '<table><tr><th>Column</th><th>Type</th><th>Unique Values</th><th>Example Values</th></tr>',
             paste(sapply(meta_cols, function(col) {
-              nu <- length(unique(df[[col]][!is.na(df[[col]])]))
-              sprintf('<span class="stat-badge">%s (%d levels)</span>', col, nu)
-            }), collapse=" "),
-            '</div>') else "",
+              x    <- df[[col]]
+              nu   <- length(unique(x[!is.na(x)]))
+              ex   <- paste(head(unique(x[!is.na(x)]),3), collapse=", ")
+              typ  <- if(is.numeric(x)) "Numeric" else "Character"
+              sprintf('<tr><td><b>%s</b></td><td>%s</td><td>%d</td><td>%s</td></tr>',col,typ,nu,ex)
+            }), collapse=""),
+            '</table></div>') else "",
 
-          '<div class="note"><b>📝 Interpretation guide:</b>',
+          '<div class="note"><b>📝 Data interpretation:</b>',
           '<ul style="margin:6px 0 0 16px;font-size:12.5px;">',
-          '<li><b>CV% &lt; 10%</b>: Low variability — index is stable across plots</li>',
-          '<li><b>CV% 10–30%</b>: Moderate variability — typical for most vegetation indices</li>',
-          '<li><b>CV% &gt; 30%</b>: High variability — check for soil contamination or outliers</li>',
-          '<li>Normalised indices (NDVI, NDRE, etc.) should be in range −1 to +1</li>',
-          '<li>Values outside expected range may indicate scaling issues</li>',
+          '<li><b>CV% &lt; 10%</b>: Low variability — index is stable across plots (possibly low discrimination power)</li>',
+          '<li><b>CV% 10–30%</b>: Moderate variability — typical range for vegetation indices in field trials</li>',
+          '<li><b>CV% &gt; 30%</b>: High variability — inspect for soil contamination, shadows, or sensor artefacts</li>',
+          '<li>Normalised indices (NDVI, NDRE, GNDVI) should be in range −1 to +1; values outside this range indicate scaling errors</li>',
+          '<li>RGB-derived indices (NGRDI, BGI, etc.) typically range from −1 to +1 depending on the formula</li>',
           '</ul></div>'
         )
       }
 
-      # ── 3. Field Heatmaps ────────────────────────────────────
-      if ("maps" %in% secs && has_idx) {
-        incProgress(0.08, "Field heatmaps…")
+      # ════════════════════════════════════════════════════════
+      # 4. FIELD HEATMAPS (per-plot)
+      # ════════════════════════════════════════════════════════
+      if ("maps" %in% secs && has_idx && has_grid) {
+        incProgress(0.08, "Rendering field heatmaps...")
         lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_maps">3. Field Heatmaps</h2>',
-          '<p>Spatial distribution of vegetation indices across the field. ',
-          'Each plot is coloured by its mean index value. ',
-          'Patterns of high/low values can reveal spatial trends, irrigation gradients, ',
-          'disease pressure, or genotypic differences.</p>',
-          '<div class="note"><b>📝 Note:</b> Heatmaps shown here are static snapshots. ',
-          'For interactive zoom and hover with plot metadata, use the Field Maps tab in the app.</div>'
+          '<hr class="section-divider">',
+          '<h2 id="sec_maps">4. Field Heatmaps</h2>',
+          '<p>Field heatmaps show the spatial distribution of each vegetation index across all plots. ',
+          'Each polygon is coloured by its mean index value within the plot boundary. ',
+          'Spatial patterns can reveal gradients caused by irrigation, soil variation, disease pressure, ',
+          'or genuine genotypic differences. Comparing multiple indices helps distinguish biological ',
+          'signal from spatial artefacts.</p>',
+          '<div class="note"><b>📝 Interpretation:</b> Spatial clusters of high or low values that persist ',
+          'across multiple indices suggest genuine field gradients (soil, water, sunlight). ',
+          'Patterns that appear in only one index may reflect that index\'s sensitivity to a specific ',
+          'trait (e.g., NDRE responds strongly to chlorophyll content). Random scatter indicates ',
+          'high within-trial variability — desirable for detecting genotypic differences.</div>'
         )
 
         idx_names <- names(rv$idx_ras)
-        show_idx  <- head(idx_names, 6)
+        show_idx  <- head(idx_names, 8)
 
-        for (idx_nm in show_idx) {
-          incProgress(0.01, paste("Heatmap:", idx_nm))
+        for (i_nm in show_idx) {
+          incProgress(0.01, paste("Heatmap:", i_nm))
           b64 <- tryCatch({
-            if (!is.null(rv$shape) && !is.null(rv$extracted) && idx_nm %in% names(rv$extracted)) {
-              shp_v <- if (!inherits(rv$shape,"SpatVector")) terra::vect(rv$shape) else rv$shape
-              vals  <- rv$extracted[[idx_nm]]
+            if (!is.null(rv$extracted) && i_nm %in% names(rv$extracted)) {
+              shp_v <- if(!inherits(rv$shape,"SpatVector")) terra::vect(rv$shape) else rv$shape
+              vals  <- rv$extracted[[i_nm]]
               shp_v$val <- vals
-              df_sf <- sf::st_as_sf(shp_v)
+              df_sf <- tryCatch(sf::st_as_sf(shp_v), error=function(e) NULL)
+              req(df_sf)
               gg <- ggplot(df_sf) +
-                geom_sf(aes(fill=val), color="white", linewidth=0.2) +
+                geom_sf(aes(fill=val), color="white", linewidth=0.15) +
                 scale_fill_gradientn(colors=RColorBrewer::brewer.pal(11,"RdYlGn"),
-                                     na.value="grey80", name=idx_nm) +
-                labs(title=paste("Field Heatmap:", idx_nm),
-                     subtitle=paste0("Mean per plot | n=", sum(!is.na(vals)), " plots")) +
+                                     na.value="grey85", name=i_nm) +
+                labs(title=paste("Field Heatmap:", i_nm),
+                     subtitle=sprintf("Mean per plot | n=%d plots | range: [%.4f, %.4f]",
+                       sum(!is.na(vals)), min(vals,na.rm=TRUE), max(vals,na.rm=TRUE))) +
                 theme_minimal() +
-                theme(plot.title=element_text(face="bold", size=13, color="#1a1a2e"),
-                      plot.subtitle=element_text(size=10, color="#666"),
-                      axis.text=element_text(size=7))
-              gg_to_b64(gg, w=9, h=6, dpi=110)
-            } else {
-              lyr <- rv$idx_ras[[idx_nm]]
-              samp_df <- as.data.frame(lyr, xy=TRUE); names(samp_df)[3] <- "val"
-              samp_df <- samp_df[!is.na(samp_df$val), ]
-              if (nrow(samp_df) > 50000) samp_df <- samp_df[sample(nrow(samp_df), 50000), ]
-              gg <- ggplot(samp_df, aes(x=x, y=y, fill=val)) +
-                geom_raster() +
-                scale_fill_gradientn(colors=RColorBrewer::brewer.pal(11,"RdYlGn"),
-                                     na.value="grey80", name=idx_nm) +
-                coord_equal() +
-                labs(title=paste("Raster Heatmap:", idx_nm)) +
-                theme_minimal() +
-                theme(plot.title=element_text(face="bold", size=12, color="#1a1a2e"),
-                      axis.text=element_text(size=7))
-              gg_to_b64(gg, w=9, h=6, dpi=110)
-            }
+                theme(plot.title=element_text(face="bold",size=14,color="#1a1a2e"),
+                      plot.subtitle=element_text(size=10,color="#555"),
+                      axis.text=element_text(size=7), legend.position="right")
+              gg_to_b64(gg, w=10, h=6.5, dpi=110)
+            } else NULL
           }, error=function(e) NULL)
-          lines <- c(lines, img_html(b64, paste0("Figure: Spatial distribution of ", idx_nm,
-            ". Colour scale: Red (low) → Yellow → Green (high).")))
+          lines <- c(lines,
+            sprintf('<h3>%s — Field Heatmap</h3>', i_nm),
+            img_html(b64,
+              paste0("Figure 4.", which(show_idx==i_nm), ": ", i_nm,
+                     " spatial distribution. Red = low, Yellow = medium, Green = high values. ",
+                     "White outlines = individual plot boundaries."))
+          )
         }
-        if (length(idx_names) > 6)
-          lines <- c(lines, sprintf('<div class="note">Showing first 6 of %d indices. ',
-            length(idx_names)), 'See the Field Maps tab for all indices.</div>')
+        if (length(idx_names)>8)
+          lines <- c(lines, sprintf('<div class="note">Showing first 8 of %d indices. ',
+            length(idx_names)), 'Use the Field Maps tab for all indices interactively.</div>')
       }
 
-      # ── 4. Index Distributions ───────────────────────────────
-      if ("dists" %in% secs && has_data && length(nc) > 0) {
-        incProgress(0.08, "Distributions…")
+      # ════════════════════════════════════════════════════════
+      # 5. INDEX DISTRIBUTIONS
+      # ════════════════════════════════════════════════════════
+      if ("dists" %in% secs && has_data && length(nc)>0) {
+        incProgress(0.07, "Distribution plots...")
+        idx_nc <- if (!is.null(rv$idx_ras)) nc[nc %in% names(rv$idx_ras)] else nc
         lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_dists">4. Index Distributions</h2>',
-          '<p>Distribution of each vegetation index across all plots. ',
-          'The violin shape shows the density, the inner box shows Q1–Q3, ',
-          'and the horizontal line marks the median. ',
-          'Red dots indicate outlier plots (IQR × 1.5 fence).</p>'
+          '<hr class="section-divider">',
+          '<h2 id="sec_dists">5. Index Distributions</h2>',
+          '<p>Distribution plots show how each vegetation index is distributed across all plots. ',
+          'The violin shape shows the probability density at each value — wide sections indicate ',
+          'many plots with those values. The inner box shows the interquartile range (Q1–Q3), ',
+          'the horizontal line marks the median, and red dots mark outlier plots (IQR × 1.5 rule).</p>',
+          '<p>Wide, symmetric distributions are ideal for genotype discrimination. ',
+          'Narrow distributions indicate low variability (the index may not be useful for ranking). ',
+          'Skewed distributions may indicate sensor artefacts or non-normal trait distributions.</p>'
         )
 
-        show_nc <- head(nc[nc %in% names(rv$idx_ras)], 9)
-        if (!length(show_nc)) show_nc <- head(nc, 9)
-
-        b64 <- tryCatch({
-          df_long <- tidyr::pivot_longer(df[, show_nc, drop=FALSE],
-                                         cols=everything(), names_to="Index", values_to="Value")
+        # Combined violin plot for all indices
+        show_nc <- head(idx_nc, 10)
+        b64_v <- tryCatch({
+          df_long <- tidyr::pivot_longer(df[,show_nc,drop=FALSE],
+                                          cols=tidyr::everything(),
+                                          names_to="Index", values_to="Value")
           df_long$Value[!is.finite(df_long$Value)] <- NA
-          gg <- ggplot(df_long[!is.na(df_long$Value), ],
-                       aes(x=reorder(Index, Value, FUN=median, na.rm=TRUE), y=Value)) +
-            geom_violin(fill="#CC0000", alpha=0.55, trim=FALSE) +
+          gg <- ggplot(df_long[!is.na(df_long$Value),],
+                       aes(x=reorder(Index,Value,FUN=median,na.rm=TRUE), y=Value)) +
+            geom_violin(fill="#CC0000", alpha=0.50, trim=FALSE) +
             geom_boxplot(width=0.1, fill="white", outlier.shape=16,
-                         outlier.color="#CC0000", outlier.size=1.5) +
+                         outlier.color="#CC0000", outlier.size=1.8, linewidth=0.6) +
             coord_flip() +
-            labs(title="Index Distributions Across All Plots",
-                 x=NULL, y="Value") +
-            theme_minimal() +
-            theme(plot.title=element_text(face="bold", size=13, color="#1a1a2e"),
-                  axis.text.y=element_text(size=10, face="bold"))
-          gg_to_b64(gg, w=10, h=max(5, length(show_nc)*0.7), dpi=110)
+            labs(title="Vegetation Index Distributions — All Plots",
+                 subtitle="Ordered by median value. Red dots = outlier plots (IQR × 1.5)",
+                 x=NULL, y="Index Value") +
+            theme_minimal(base_size=12) +
+            theme(plot.title=element_text(face="bold",color="#1a1a2e",size=13),
+                  plot.subtitle=element_text(size=10,color="#666"),
+                  axis.text.y=element_text(size=10,face="bold"),
+                  panel.grid.minor=element_blank())
+          gg_to_b64(gg, w=11, h=max(5,length(show_nc)*0.75), dpi=110)
         }, error=function(e) NULL)
-        lines <- c(lines, img_html(b64,
-          "Figure: Violin + box plots for all calculated indices. Outlier points in red."))
+        lines <- c(lines,
+          img_html(b64_v,
+            "Figure 5.1: Violin + box plots for all calculated indices. Sorted by median. Outlier plots shown in red."))
+
+        # Per-index histogram with normal curve overlay
+        if (length(idx_nc) >= 2) {
+          b64_hist <- tryCatch({
+            show4 <- head(idx_nc, 4)
+            df_l  <- tidyr::pivot_longer(df[,show4,drop=FALSE],
+                                          cols=tidyr::everything(),
+                                          names_to="Index", values_to="Value")
+            df_l$Value[!is.finite(df_l$Value)] <- NA
+            gg <- ggplot(df_l[!is.na(df_l$Value),], aes(x=Value)) +
+              geom_histogram(aes(y=after_stat(density)),
+                             bins=25, fill="#CC0000", alpha=0.65, color="white") +
+              geom_density(color="#1a1a2e", linewidth=1.1, alpha=0) +
+              geom_vline(aes(xintercept=Value), stat="summary", fun=mean,
+                         linetype="dashed", color="#0f3460", linewidth=0.9) +
+              facet_wrap(~Index, scales="free", ncol=2) +
+              labs(title="Index Histograms with Density Curves",
+                   subtitle="Dashed line = mean. Curve = kernel density estimate.",
+                   x="Value", y="Density") +
+              theme_minimal(base_size=11) +
+              theme(plot.title=element_text(face="bold",color="#1a1a2e"),
+                    strip.text=element_text(face="bold",size=11))
+            gg_to_b64(gg, w=10, h=7, dpi=110)
+          }, error=function(e) NULL)
+          lines <- c(lines,
+            img_html(b64_hist,
+              "Figure 5.2: Histograms for top 4 indices. Bars = frequency density. Curve = smoothed distribution. Dashed = mean."))
+        }
       }
 
-      # ── 5. Summary Statistics ────────────────────────────────
-      if ("stats" %in% secs && has_data && length(nc) > 0) {
-        incProgress(0.05, "Statistics table…")
+      # ════════════════════════════════════════════════════════
+      # 6. SUMMARY STATISTICS TABLE
+      # ════════════════════════════════════════════════════════
+      if ("stats" %in% secs && has_data && length(nc)>0) {
+        incProgress(0.05, "Statistics table...")
+        idx_nc <- if (!is.null(rv$idx_ras)) nc[nc %in% names(rv$idx_ras)] else nc
         lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_stats">5. Summary Statistics</h2>',
+          '<hr class="section-divider">',
+          '<h2 id="sec_stats">6. Summary Statistics</h2>',
+          '<p>Descriptive statistics for each vegetation index across all ', as.character(nrow(df)), ' plots. ',
+          'The Coefficient of Variation (CV%) measures relative variability — higher values indicate ',
+          'greater spread across plots, which generally means better discriminating power for genotype selection. ',
+          'Skewness measures asymmetry: positive skew (right tail) may indicate a few plots with unusually high values.</p>',
+
           '<div class="card"><table>',
           '<tr><th>Index</th><th>N</th><th>Mean</th><th>SD</th><th>Min</th>',
-          '<th>Median</th><th>Max</th><th>CV%</th><th>Skewness</th></tr>'
+          '<th>Q1</th><th>Median</th><th>Q3</th><th>Max</th><th>CV%</th><th>Skewness</th></tr>'
         )
-        show_nc <- if (!is.null(rv$idx_ras)) nc[nc %in% names(rv$idx_ras)] else nc
-        for (col in show_nc) {
+        for (col in idx_nc) {
           x  <- df[[col]]; x[!is.finite(x)] <- NA
-          n  <- sum(!is.na(x)); mn <- mean(x,na.rm=T); s <- sd(x,na.rm=T)
-          cv <- round(s/abs(mn)*100, 1)
-          sk <- if (n > 3) round((sum((x[!is.na(x)]-mn)^3)/n) / s^3, 3) else NA
-          cls <- if(!is.finite(cv)) "" else if(cv<10)"good" else if(cv<30)"caution" else "bad"
+          n  <- sum(!is.na(x))
+          if (n < 2) next
+          mn <- mean(x,na.rm=T); s <- sd(x,na.rm=T)
+          q1 <- quantile(x,.25,na.rm=T); q3 <- quantile(x,.75,na.rm=T)
+          cv <- round(s/abs(mn)*100,1)
+          sk <- if(n>3) round((sum((x[!is.na(x)]-mn)^3,na.rm=T)/n)/s^3,3) else NA
+          cls <- if(!is.finite(cv))"" else if(cv<10)"good" else if(cv<30)"caution" else "bad"
           lines <- c(lines, sprintf(
-            '<tr><td><b>%s</b></td><td>%d</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td class="%s">%.1f</td><td>%s</td></tr>',
-            col, n, mn, s, min(x,na.rm=T), median(x,na.rm=T), max(x,na.rm=T),
+            '<tr><td><b>%s</b></td><td>%d</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td>%.4f</td><td class="%s">%.1f</td><td>%s</td></tr>',
+            col, n, mn, s, min(x,na.rm=T), q1, median(x,na.rm=T), q3, max(x,na.rm=T),
             cls, cv, if(is.na(sk)) "—" else sk))
         }
         lines <- c(lines, '</table></div>',
-          '<div class="note"><b>📝 Skewness:</b> Values near 0 indicate symmetry. ',
-          'Positive skew (&gt;1) means a long right tail; negative (&lt;−1) means left tail. ',
-          'Highly skewed indices may benefit from log-transformation before ML modelling.</div>'
+          '<div class="note">',
+          '<b>Column guide:</b> N = valid plot count | SD = standard deviation | ',
+          'Q1/Q3 = first/third quartile | CV% = coefficient of variation (SD/Mean×100) | ',
+          'Skewness: 0 = symmetric, &gt;1 = right-skewed, &lt;−1 = left-skewed.<br>',
+          '<b>Colour coding:</b> <span class="good">Green CV%</span> = low variability (&lt;10%) | ',
+          '<span class="caution">Orange</span> = moderate (10–30%) | ',
+          '<span class="bad">Red</span> = high variability (&gt;30%)</div>'
         )
       }
 
-      # ── 6. Correlation ───────────────────────────────────────
-      if ("corr" %in% secs && has_data && length(nc) >= 2) {
-        incProgress(0.07, "Correlation…")
+      # ════════════════════════════════════════════════════════
+      # 7. CORRELATION ANALYSIS
+      # ════════════════════════════════════════════════════════
+      if ("corr" %in% secs && has_data && length(nc)>=2) {
+        incProgress(0.07, "Correlation analysis...")
+        idx_nc <- if (!is.null(rv$idx_ras)) nc[nc %in% names(rv$idx_ras)] else nc
         lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_corr">6. Correlation Analysis</h2>',
-          '<p>Pearson correlation coefficients between all numeric indices. ',
-          'Strong positive correlations (r &gt; 0.8) suggest redundancy between indices. ',
-          'Negative correlations between vegetation and soil indices are expected.</p>'
+          '<hr class="section-divider">',
+          '<h2 id="sec_corr">7. Correlation Analysis</h2>',
+          '<p>The Pearson correlation matrix shows pairwise linear relationships between all indices. ',
+          'Values range from −1 (perfect negative) to +1 (perfect positive). ',
+          'Strong correlations (|r| &gt; 0.8) indicate <b>redundant indices</b> — selecting just one ',
+          'of a highly correlated pair is sufficient for analysis and reduces multicollinearity in models. ',
+          'Moderate correlations (0.4–0.8) suggest related but distinct traits. ',
+          'Near-zero correlations indicate independent information.</p>'
         )
-        b64 <- tryCatch({
-          nd <- df[, nc[nc %in% if(!is.null(rv$idx_ras)) names(rv$idx_ras) else nc], drop=FALSE]
-          nd <- nd[, sapply(nd, function(x) sum(is.finite(x)) > 5), drop=FALSE]
-          if (ncol(nd) >= 2) {
-            cm <- cor(nd, use="pairwise.complete.obs")
-            gg <- ggcorrplot::ggcorrplot(cm, method="square", type="lower",
-              lab=TRUE, lab_size=2.5, colors=c("#0f3460","white","#CC0000"),
-              outline.col="white", title="Pearson Correlation Matrix",
-              ggtheme=theme_minimal()) +
-              theme(plot.title=element_text(face="bold", size=13, color="#1a1a2e"),
-                    axis.text.x=element_text(size=8, angle=45, hjust=1),
-                    axis.text.y=element_text(size=8))
-            gg_to_b64(gg, w=max(7, ncol(nd)*0.7), h=max(6, ncol(nd)*0.65), dpi=110)
-          } else NULL
+        b64_cm <- tryCatch({
+          nd <- df[, idx_nc, drop=FALSE]
+          nd <- nd[, sapply(nd, function(x) sum(is.finite(x))>5), drop=FALSE]
+          if (ncol(nd) < 2) stop("too few")
+          cm <- cor(nd, use="pairwise.complete.obs")
+          gg <- ggcorrplot::ggcorrplot(cm, method="square", type="lower",
+            lab=TRUE, lab_size=2.8,
+            colors=c("#0f3460","white","#CC0000"),
+            outline.col="white",
+            title="Pearson Correlation Matrix",
+            ggtheme=theme_minimal()) +
+            theme(plot.title=element_text(face="bold",size=13,color="#1a1a2e"),
+                  axis.text.x=element_text(size=8,angle=45,hjust=1),
+                  axis.text.y=element_text(size=8))
+          gg_to_b64(gg, w=max(8,ncol(nd)*0.75), h=max(7,ncol(nd)*0.7), dpi=110)
         }, error=function(e) NULL)
-        lines <- c(lines, img_html(b64,
-          "Figure: Pearson correlation matrix. Blue = negative correlation, Red = positive."))
+        lines <- c(lines,
+          img_html(b64_cm,
+            "Figure 7.1: Pearson correlation matrix. Blue = negative, Red = positive. Number in each cell = r value."))
+
         # Top correlations table
         tryCatch({
-          nd2 <- df[, nc[nc %in% if(!is.null(rv$idx_ras)) names(rv$idx_ras) else nc], drop=FALSE]
-          nd2 <- nd2[, sapply(nd2, function(x) sum(is.finite(x)) > 5), drop=FALSE]
-          if (ncol(nd2) >= 2) {
-            cm2 <- cor(nd2, use="pairwise.complete.obs")
-            ut  <- upper.tri(cm2)
-            df_cor <- data.frame(
-              Index1 = rownames(cm2)[row(cm2)[ut]],
-              Index2 = colnames(cm2)[col(cm2)[ut]],
-              r      = round(cm2[ut], 4))
-            df_cor <- df_cor[order(abs(df_cor$r), decreasing=TRUE), ]
-            top10  <- head(df_cor, 10)
-            lines <- c(lines, '<h3>Top 10 Correlations</h3>',
+          nd2 <- df[,idx_nc,drop=FALSE]; nd2 <- nd2[,sapply(nd2,function(x) sum(is.finite(x))>5),drop=FALSE]
+          if (ncol(nd2)>=2) {
+            cm2 <- cor(nd2,use="pairwise.complete.obs"); ut <- upper.tri(cm2)
+            df_c <- data.frame(Index1=rownames(cm2)[row(cm2)[ut]],
+                               Index2=colnames(cm2)[col(cm2)[ut]], r=round(cm2[ut],4))
+            df_c <- df_c[order(abs(df_c$r),decreasing=TRUE),]
+            top15 <- head(df_c,15)
+            lines <- c(lines,'<h3>Top 15 Strongest Correlations</h3>',
               '<div class="card"><table>',
-              '<tr><th>Index 1</th><th>Index 2</th><th>r</th><th>Interpretation</th></tr>')
-            for (i in seq_len(nrow(top10))) {
-              r_v <- top10$r[i]
-              interp <- if(abs(r_v) > 0.9) "Very strong" else if(abs(r_v) > 0.7) "Strong" else "Moderate"
-              cls <- if(r_v > 0) "good" else "bad"
-              lines <- c(lines, sprintf('<tr><td>%s</td><td>%s</td><td class="%s">%.4f</td><td>%s %s</td></tr>',
-                top10$Index1[i], top10$Index2[i], cls, r_v, interp,
-                if(r_v > 0) "positive" else "negative"))
+              '<tr><th>Index 1</th><th>Index 2</th><th>r</th><th>|r|</th><th>Strength</th><th>Implication</th></tr>')
+            for(i in seq_len(nrow(top15))) {
+              rv2 <- top15$r[i]; ar2 <- abs(rv2)
+              strength <- if(ar2>0.9)"Very strong" else if(ar2>0.7)"Strong" else "Moderate"
+              impl <- if(ar2>0.85) "Consider using only one" else "Both may be informative"
+              cls2 <- if(rv2>0)"good" else "bad"
+              lines <- c(lines, sprintf('<tr><td>%s</td><td>%s</td><td class="%s">%.4f</td><td>%.4f</td><td>%s</td><td>%s</td></tr>',
+                top15$Index1[i],top15$Index2[i],cls2,rv2,ar2,strength,impl))
             }
-            lines <- c(lines, '</table></div>')
+            lines <- c(lines,'</table></div>')
           }
         }, error=function(e) NULL)
       }
 
-      # ── 7. PCA ───────────────────────────────────────────────
-      if ("pca" %in% secs && !is.null(rv$pca_obj)) {
-        incProgress(0.07, "PCA…")
-        pca <- rv$pca_obj
-        imp <- summary(pca)$importance
-        pct <- round(imp[2,]*100, 1); cpct <- round(imp[3,]*100, 1)
-        lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_pca">7. PCA &amp; Variance Analysis</h2>',
-          sprintf('<p>PCA was performed on <b>%d variables</b>. ',
-                  nrow(pca$rotation)),
-          sprintf('The first two principal components explain <b>%.1f%%</b> of total variance ',
-                  pct[1]+pct[2]),
-          sprintf('(PC1: %.1f%%, PC2: %.1f%%).</p>', pct[1], pct[2])
-        )
-        # Scree plot
-        b64_scree <- tryCatch({
-          df_sc <- data.frame(PC=seq_along(pct), Var=pct, Cum=cpct)
-          df_sc <- head(df_sc, 10)
-          gg <- ggplot(df_sc, aes(x=PC)) +
-            geom_col(aes(y=Var), fill="#CC0000", alpha=0.85, width=0.7) +
-            geom_line(aes(y=Cum), color="#FFC72C", linewidth=1.3) +
-            geom_point(aes(y=Cum), color="#FFC72C", size=3.5) +
-            geom_hline(yintercept=80, linetype="dashed", color="#2d6a4f", linewidth=0.8) +
-            scale_x_continuous(breaks=seq_along(pct)) +
-            labs(title="Scree Plot — Variance Explained per PC",
-                 x="Principal Component", y="% Variance") +
-            theme_minimal() +
-            theme(plot.title=element_text(face="bold", size=13, color="#1a1a2e"))
-          gg_to_b64(gg, w=8, h=5, dpi=110)
-        }, error=function(e) NULL)
-        lines <- c(lines, img_html(b64_scree,
-          "Figure: Scree plot. Bars = variance per PC; line = cumulative variance; green dashed = 80% threshold."))
-        # PC1 loadings
-        b64_load <- tryCatch({
-          df_ld <- data.frame(Variable=rownames(pca$rotation), Loading=pca$rotation[,1]) %>%
-            dplyr::arrange(Loading)
-          gg <- ggplot(df_ld, aes(x=reorder(Variable,Loading), y=Loading, fill=Loading)) +
-            geom_col(color="white", linewidth=0.3) +
-            scale_fill_gradient2(low="#0f3460", mid="white", high="#CC0000", midpoint=0) +
-            coord_flip() +
-            labs(title="PC1 Variable Loadings", x=NULL, y="Loading") +
-            theme_minimal() +
-            theme(plot.title=element_text(face="bold", size=13, color="#1a1a2e"),
-                  legend.position="none")
-          gg_to_b64(gg, w=8, h=max(4, nrow(df_ld)*0.4), dpi=110)
-        }, error=function(e) NULL)
-        lines <- c(lines, img_html(b64_load,
-          "Figure: Variable loadings on PC1. Positive loadings (red) increase with PC1; negative (blue) decrease."),
-          '<div class="note"><b>📝 Interpretation:</b> Variables with high absolute loadings ',
-          'on PC1 are the main drivers of variation. If NDVI and canopy-related indices ',
-          'load strongly, PC1 likely represents overall plant vigour.</div>'
-        )
-      } else if ("pca" %in% secs) {
-        lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_pca">7. PCA</h2>',
-          '<div class="warn">⚠️ PCA not yet run. Go to the PCA &amp; Clustering tab and click "Run PCA".</div>')
-      }
-
-      # ── 8. Genotype Rankings ─────────────────────────────────
-      if ("rankings" %in% secs && has_data) {
-        incProgress(0.06, "Rankings…")
-        lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_rankings">8. Genotype Rankings</h2>',
-          '<p>Plots ranked by their calculated vegetation index values. ',
-          'For weighted multi-index ranking and elite plot categorisation, ',
-          'use the Genotype Selection tab in the app.</p>'
-        )
-        if (length(nc) > 0) {
-          first_idx <- nc[nc %in% if(!is.null(rv$idx_ras)) names(rv$idx_ras) else nc][1]
-          if (!is.na(first_idx) && first_idx %in% names(df)) {
-            b64 <- tryCatch({
-              x    <- df[[first_idx]]; x[!is.finite(x)] <- NA
-              id_c <- names(df)[1]
-              df_r <- data.frame(Plot=as.character(df[[id_c]]), Val=x)
-              df_r <- df_r[!is.na(df_r$Val), ]
-              df_r <- df_r[order(-df_r$Val), ]
-              top  <- head(df_r, 30)
-              gg <- ggplot(top, aes(x=reorder(Plot, Val), y=Val,
-                                    fill=Val)) +
-                geom_col(color="white", linewidth=0.15) +
-                scale_fill_gradientn(colors=c("#1a1a2e","#2d6a4f","#FFC72C","#CC0000")) +
-                coord_flip() +
-                labs(title=paste("Top 30 Plots —", first_idx),
-                     subtitle="Ranked by mean index value", x="Plot", y=first_idx) +
-                theme_minimal() +
-                theme(plot.title=element_text(face="bold", size=13, color="#1a1a2e"),
-                      legend.position="none")
-              gg_to_b64(gg, w=9, h=7, dpi=110)
-            }, error=function(e) NULL)
-            lines <- c(lines, img_html(b64,
-              paste0("Figure: Top 30 plots ranked by ", first_idx, ". Colour intensity = index value.")))
-
-            # Top 20 table
-            tryCatch({
-              x    <- df[[first_idx]]; x[!is.finite(x)] <- NA
-              id_c <- names(df)[1]
-              df_t <- data.frame(Rank=seq_along(x), Plot=df[[id_c]], Value=round(x,4))
-              df_t <- df_t[order(-df_t$Value), ]
-              df_t$Rank <- seq_len(nrow(df_t))
-              top20 <- head(df_t[!is.na(df_t$Value), ], 20)
-              lines <- c(lines, sprintf('<h3>Top 20 Plots — %s</h3>', first_idx),
-                '<div class="card"><table>',
-                '<tr><th>Rank</th><th>Plot</th><th>Value</th></tr>')
-              for (i in seq_len(nrow(top20))) {
-                cls <- if(i<=3) "good" else if(i<=10) "caution" else ""
-                lines <- c(lines, sprintf('<tr><td class="%s">%d</td><td>%s</td><td>%.4f</td></tr>',
-                  cls, top20$Rank[i], top20$Plot[i], top20$Value[i]))
-              }
-              lines <- c(lines, '</table></div>')
-            }, error=function(e) NULL)
-          }
+      # ════════════════════════════════════════════════════════
+      # 8. PCA
+      # ════════════════════════════════════════════════════════
+      if ("pca" %in% secs) {
+        incProgress(0.06, "PCA plots...")
+        if (!is.null(rv$pca_obj)) {
+          pca  <- rv$pca_obj
+          imp  <- summary(pca)$importance
+          pct  <- round(imp[2,]*100,1); cpct <- round(imp[3,]*100,1)
+          n_pc <- min(length(pct),10)
+          lines <- c(lines,
+            '<hr class="section-divider">',
+            '<h2 id="sec_pca">8. PCA &amp; Variance Analysis</h2>',
+            sprintf('<p>Principal Component Analysis (PCA) was performed on <b>%d variables</b>. ',nrow(pca$rotation)),
+            sprintf('The first two components together explain <b>%.1f%%</b> of the total variance ',pct[1]+pct[2]),
+            sprintf('(PC1: %.1f%%, PC2: %.1f%%). ',pct[1],pct[2]),
+            'PCA reduces correlated indices into uncorrelated principal components, ',
+            'enabling visualisation of overall trial variation and identifying which ',
+            'indices drive the most variability across plots.</p>'
+          )
+          # Scree plot
+          b64_sc <- tryCatch({
+            df_sc <- data.frame(PC=paste0("PC",1:n_pc), Var=pct[1:n_pc], Cum=cpct[1:n_pc])
+            df_sc$PC <- factor(df_sc$PC, levels=df_sc$PC)
+            gg <- ggplot(df_sc, aes(x=PC)) +
+              geom_col(aes(y=Var), fill="#CC0000", alpha=0.85, width=0.65) +
+              geom_line(aes(y=Cum, group=1), color="#FFC72C", linewidth=1.4) +
+              geom_point(aes(y=Cum), color="#FFC72C", size=4) +
+              geom_text(aes(y=Var, label=paste0(Var,"%")), vjust=-0.4, size=3.2, fontface="bold") +
+              geom_hline(yintercept=80, linetype="dashed", color="#2d6a4f", linewidth=0.9) +
+              annotate("text", x=n_pc*0.9, y=82, label="80% threshold", color="#2d6a4f", size=3) +
+              labs(title="Scree Plot — Variance Explained per Principal Component",
+                   subtitle="Bars = individual variance %; Line = cumulative %",
+                   x="Principal Component", y="% Variance Explained") +
+              theme_minimal(base_size=12) +
+              theme(plot.title=element_text(face="bold",color="#1a1a2e"))
+            gg_to_b64(gg, w=9, h=5.5, dpi=110)
+          }, error=function(e) NULL)
+          lines <- c(lines,
+            img_html(b64_sc,
+              paste0("Figure 8.1: Scree plot. Bars = variance explained per PC. ",
+                     "Yellow line = cumulative variance. Green dashed = 80% threshold. ",
+                     sprintf("PC1+PC2 = %.1f%% of total variance.", pct[1]+pct[2]))))
+          # PC1 loadings
+          b64_ld <- tryCatch({
+            df_ld <- data.frame(Var=rownames(pca$rotation), PC1=pca$rotation[,1], PC2=pca$rotation[,min(2,ncol(pca$rotation))])
+            df_ld <- df_ld[order(df_ld$PC1),]
+            gg <- ggplot(df_ld, aes(x=reorder(Var,PC1), y=PC1, fill=PC1)) +
+              geom_col(color="white", linewidth=0.25) +
+              scale_fill_gradient2(low="#0f3460",mid="white",high="#CC0000",midpoint=0) +
+              coord_flip() +
+              labs(title="PC1 Variable Loadings",
+                   subtitle="Positive (red) = increases with PC1 | Negative (blue) = decreases with PC1",
+                   x=NULL, y="Loading") +
+              theme_minimal(base_size=12) +
+              theme(plot.title=element_text(face="bold",color="#1a1a2e"), legend.position="none")
+            gg_to_b64(gg, w=9, h=max(4.5,nrow(df_ld)*0.42), dpi=110)
+          }, error=function(e) NULL)
+          lines <- c(lines,
+            img_html(b64_ld,
+              "Figure 8.2: PC1 loadings. Indices with large absolute loadings are the primary drivers of variation across plots."),
+            '<div class="note"><b>📝 PCA interpretation:</b> If NDVI, NDRE, and canopy-related ',
+            'indices load strongly on PC1, that component likely represents overall plant vigour. ',
+            'PC2 often captures a secondary dimension such as stress response or canopy architecture. ',
+            'Plots scoring high on both PC1 and PC2 are likely the most vigorous and resilient genotypes.</div>'
+          )
+          # PC loadings table
+          df_ld_t <- as.data.frame(round(pca$rotation[,1:min(5,ncol(pca$rotation))],4))
+          lines <- c(lines,
+            '<h3>PC Loadings Table (top 5 PCs)</h3>',
+            '<div class="card"><table>',
+            paste0('<tr><th>Index</th>',
+              paste(sprintf('<th>PC%d (%.1f%%)</th>',1:ncol(df_ld_t),pct[1:ncol(df_ld_t)]),collapse=""),
+              '</tr>'),
+            paste(sapply(seq_len(nrow(df_ld_t)), function(i) {
+              paste0('<tr><td><b>',rownames(df_ld_t)[i],'</b></td>',
+                paste(sapply(df_ld_t[i,], function(v) {
+                  cls3 <- if(v>0.3)"good" else if(v< -0.3)"bad" else ""
+                  sprintf('<td class="%s">%.4f</td>',cls3,v)
+                }),collapse=""),'</tr>')
+            }),collapse=""),
+            '</table></div>'
+          )
+        } else {
+          lines <- c(lines,
+            '<hr class="section-divider">',
+            '<h2 id="sec_pca">8. PCA</h2>',
+            '<div class="warn">⚠️ PCA not run yet. Go to the PCA &amp; Clustering tab and click "Run PCA".</div>')
         }
       }
 
-      # ── 9. ML Results ────────────────────────────────────────
-      if ("ml" %in% secs) {
-        incProgress(0.05, "ML results…")
+      # ════════════════════════════════════════════════════════
+      # 9. GENOTYPE RANKINGS
+      # ════════════════════════════════════════════════════════
+      if ("rankings" %in% secs && has_data && length(nc)>0) {
+        incProgress(0.06, "Genotype rankings...")
+        idx_nc <- if (!is.null(rv$idx_ras)) nc[nc %in% names(rv$idx_ras)] else nc
         lines <- c(lines,
-          '<hr class="section-divider"><h2 id="sec_ml">9. Machine Learning Results</h2>')
+          '<hr class="section-divider">',
+          '<h2 id="sec_rankings">9. Genotype Rankings</h2>',
+          '<p>Plots are ranked by their vegetation index values. Higher NDVI, NDRE, GNDVI, and ',
+          'canopy-cover-related indices generally indicate better-performing genotypes under ',
+          'the measured conditions. Rankings should always be interpreted in the context of ',
+          'the experimental design — replication structure, blocking, and environmental gradients ',
+          'should be accounted for before making selection decisions.</p>',
+          '<div class="info"><b>Selection guidance:</b> Elite plots (top quartile) are candidates ',
+          'for advancement. Consider multiple indices and repeated measurements before final selection. ',
+          'Plots ranking consistently high across several independent indices are the most reliable candidates.</div>'
+        )
+
+        for (rank_idx in head(idx_nc, 3)) {
+          x    <- df[[rank_idx]]; x[!is.finite(x)] <- NA
+          id_c <- names(df)[1]
+          df_r <- data.frame(Plot=as.character(df[[id_c]]), Val=x)
+          df_r <- df_r[!is.na(df_r$Val),]
+          df_r <- df_r[order(-df_r$Val),]
+          df_r$Rank <- seq_len(nrow(df_r))
+          df_r$Category <- ifelse(df_r$Rank <= ceiling(nrow(df_r)*0.25),"Elite (top 25%)","Standard")
+
+          # Bar chart
+          b64_rank <- tryCatch({
+            top30 <- head(df_r,30)
+            top30$col <- ifelse(top30$Category=="Elite (top 25%)","#CC0000","#0f3460")
+            gg <- ggplot(top30, aes(x=reorder(Plot,Val), y=Val, fill=Category)) +
+              geom_col(color="white", linewidth=0.15, width=0.75) +
+              scale_fill_manual(values=c("Elite (top 25%)"="#CC0000","Standard"="#0f3460")) +
+              geom_hline(yintercept=quantile(df_r$Val,0.75,na.rm=TRUE),
+                         linetype="dashed",color="#e6a800",linewidth=0.9) +
+              annotate("text",x=3,y=quantile(df_r$Val,0.75,na.rm=TRUE),
+                       label="Elite threshold (Q3)",vjust=-0.5,size=3,color="#e6a800") +
+              coord_flip() +
+              labs(title=paste0("Top 30 Plots — ", rank_idx),
+                   subtitle=paste0("Red = Elite (top 25%) | Blue = Standard | ",
+                     "Dashed = Q3 threshold"),
+                   x="Plot", y=rank_idx, fill="Category") +
+              theme_minimal(base_size=12) +
+              theme(plot.title=element_text(face="bold",color="#1a1a2e"),
+                    legend.position="bottom")
+            gg_to_b64(gg, w=10, h=max(6,min(30,nrow(top30))*0.32+2), dpi=110)
+          }, error=function(e) NULL)
+          lines <- c(lines,
+            sprintf('<h3>Rankings by %s</h3>', rank_idx),
+            img_html(b64_rank,
+              paste0("Figure 9.", which(head(idx_nc,3)==rank_idx),
+                     ": Top 30 plots ranked by ", rank_idx, ". ",
+                     "Red = elite (top 25%). Dashed line = Q3 threshold.")))
+
+          # Top 20 table
+          lines <- c(lines,
+            sprintf('<h4>Top 20 Plots — %s</h4>', rank_idx),
+            '<div class="card"><table>',
+            '<tr><th>Rank</th><th>Plot</th><th>Value</th><th>Category</th><th>Percentile</th></tr>')
+          for (i in seq_len(min(20,nrow(df_r)))) {
+            r_cls <- if(df_r$Category[i]=="Elite (top 25%)")"good" else ""
+            pct_v <- round(100*(1-df_r$Rank[i]/nrow(df_r)),1)
+            lines <- c(lines, sprintf(
+              '<tr><td class="%s">%d</td><td><b>%s</b></td><td>%.4f</td><td class="%s">%s</td><td>%.1f%%</td></tr>',
+              r_cls, df_r$Rank[i], df_r$Plot[i], df_r$Val[i],
+              r_cls, df_r$Category[i], pct_v))
+          }
+          lines <- c(lines,'</table></div>')
+        }
+      }
+
+      # ════════════════════════════════════════════════════════
+      # 10. MACHINE LEARNING
+      # ════════════════════════════════════════════════════════
+      if ("ml" %in% secs) {
+        incProgress(0.05, "ML results...")
+        lines <- c(lines,
+          '<hr class="section-divider">',
+          '<h2 id="sec_ml">10. Machine Learning Results</h2>')
         if (!is.null(rv$ml_results)) {
           ml_df <- tryCatch(
             do.call(rbind, lapply(rv$ml_results$models, function(x) x$metrics)),
             error=function(e) NULL)
-          task  <- rv$ml_results$task
-          tgt   <- rv$ml_results$target
+          task <- rv$ml_results$task
+          tgt  <- rv$ml_results$target
+          feats <- rv$ml_results$features
 
           lines <- c(lines,
-            sprintf('<p>Task: <b>%s</b> &nbsp;·&nbsp; Target variable: <b>%s</b> &nbsp;·&nbsp; ',
-                    if(task=="reg") "Regression" else "Classification", tgt),
-            sprintf('Features used: <b>%d</b></p>', length(rv$ml_results$features)),
-            sprintf('<p>%s</p>', paste(
-              sapply(rv$ml_results$features, function(f)
-                sprintf('<span class="stat-badge">%s</span>', f)), collapse=" "))
+            sprintf('<p>Machine learning models were trained to predict <b>%s</b> ', tgt),
+            sprintf('using <b>%d features</b> (vegetation indices). ',length(feats)),
+            sprintf('Task type: <b>%s</b>. ', if(task=="reg") "Regression (continuous target)" else "Classification (categorical target)"),
+            'Models were evaluated using repeated cross-validation to estimate generalisation performance.</p>',
+            '<div class="card"><h4>Features used:</h4><p>',
+            paste(sapply(feats, function(f) sprintf('<span class="stat-badge">%s</span>',f)), collapse=" "),
+            '</p></div>'
           )
 
           if (!is.null(ml_df)) {
-            lines <- c(lines, '<div class="card"><table>',
-              paste0('<tr>', paste0('<th>',names(ml_df),'</th>',collapse=''), '</tr>'))
+            lines <- c(lines,
+              '<h3>Model Comparison Table</h3>',
+              '<div class="card"><table>',
+              paste0('<tr>',paste(sprintf('<th>%s</th>',names(ml_df)),collapse=""),'</tr>'))
             for (i in seq_len(nrow(ml_df))) {
               vals <- unlist(ml_df[i,])
-              cls_v <- if(task=="reg" && "RMSE" %in% names(ml_df)) {
-                r2v <- as.numeric(ml_df$R2[i])
-                if(!is.na(r2v) && r2v>0.8) "good" else if(!is.na(r2v) && r2v>0.5) "caution" else "bad"
-              } else ""
-              lines <- c(lines, paste0('<tr>', paste0(sapply(seq_along(vals), function(j) {
-                v <- vals[j]
-                cls <- if(names(vals)[j] %in% c("R2","Accuracy","Kappa")) cls_v else ""
-                sprintf('<td class="%s">%s</td>', cls, v)
-              }), collapse=''), '</tr>'))
+              lines <- c(lines, paste0('<tr>',
+                paste(sapply(seq_along(vals), function(j) {
+                  v   <- vals[j]; nm <- names(vals)[j]
+                  cls4 <- if(nm=="R2"||nm=="Accuracy") {
+                    vn <- suppressWarnings(as.numeric(v))
+                    if(!is.na(vn)&&vn>0.8)"good" else if(!is.na(vn)&&vn>0.5)"caution" else "bad"
+                  } else if (nm=="RMSE"||nm=="MAE") {
+                    "caution"
+                  } else ""
+                  sprintf('<td class="%s">%s</td>',cls4,v)
+                }),collapse=""),'</tr>'))
             }
-            lines <- c(lines, '</table></div>')
+            lines <- c(lines,'</table></div>')
 
-            # Performance chart
-            b64 <- tryCatch({
+            # Model comparison chart
+            b64_ml <- tryCatch({
               metric <- if(task=="reg" && "RMSE" %in% names(ml_df)) "RMSE"
-                        else if(task=="cls" && "Accuracy" %in% names(ml_df)) "Accuracy"
+                        else if("Accuracy" %in% names(ml_df)) "Accuracy"
                         else names(ml_df)[2]
-              ml_df[[metric]] <- as.numeric(ml_df[[metric]])
-              lower_better <- metric %in% c("RMSE","MAE")
-              gg <- ggplot(ml_df[!is.na(ml_df[[metric]]),],
-                           aes(x=reorder(Algorithm, if(lower_better) -.data[[metric]] else .data[[metric]]),
-                               y=.data[[metric]], fill=.data[[metric]])) +
-                geom_col(color="white", linewidth=0.2) +
-                scale_fill_gradient(low=if(lower_better)"#CC0000" else "#aaa",
-                                    high=if(lower_better)"#aaa" else "#CC0000") +
+              ml_df[[metric]] <- suppressWarnings(as.numeric(ml_df[[metric]]))
+              lower_is_better <- metric %in% c("RMSE","MAE")
+              ml_df2 <- ml_df[!is.na(ml_df[[metric]]),]
+              gg <- ggplot(ml_df2,
+                aes(x=reorder(Algorithm, if(lower_is_better) -.data[[metric]] else .data[[metric]]),
+                    y=.data[[metric]], fill=.data[[metric]])) +
+                geom_col(color="white",linewidth=0.2,width=0.7) +
+                scale_fill_gradient(low=if(lower_is_better)"#CC0000" else "#ccc",
+                                    high=if(lower_is_better)"#ccc" else "#CC0000") +
                 coord_flip() +
                 labs(title=paste("Model Comparison —", metric),
+                     subtitle=if(lower_is_better)"Lower is better" else "Higher is better",
                      x="Algorithm", y=metric) +
-                theme_minimal() +
-                theme(plot.title=element_text(face="bold",size=13,color="#1a1a2e"),
+                theme_minimal(base_size=12) +
+                theme(plot.title=element_text(face="bold",color="#1a1a2e"),
                       legend.position="none")
-              gg_to_b64(gg, w=8, h=5, dpi=110)
+              gg_to_b64(gg, w=9, h=5.5, dpi=110)
             }, error=function(e) NULL)
-            lines <- c(lines, img_html(b64, "Figure: Model comparison by primary metric."))
+            lines <- c(lines,
+              img_html(b64_ml,
+                paste0("Figure 10.1: Algorithm comparison by ", metric, ". ",
+                       if(task=="reg") "Lower RMSE / Higher R² = better." else "Higher Accuracy / Kappa = better.")),
+              '<div class="note"><b>📝 ML interpretation:</b>',
+              '<ul style="margin:6px 0 0 16px;font-size:12.5px;">',
+              '<li>R² &gt; 0.8: Strong model — index values explain &gt;80% of variance in the target trait</li>',
+              '<li>R² 0.5–0.8: Moderate — indices are partially predictive; consider adding more features</li>',
+              '<li>R² &lt; 0.5: Weak — indices alone may not reliably predict this trait</li>',
+              '<li>RMSE should be interpreted relative to the target variable range</li>',
+              '<li>For classification: Kappa &gt; 0.6 = substantial agreement beyond chance</li>',
+              '</ul></div>'
+            )
           }
-          lines <- c(lines,
-            '<div class="note"><b>📝 Model interpretation:</b> ',
-            'R² &gt; 0.8 indicates strong predictive accuracy. RMSE should be evaluated ',
-            'relative to the range of the target variable. For classification, Kappa &gt; 0.6 ',
-            'indicates substantial agreement beyond chance. ',
-            'Use the feature importance chart in the ML tab to identify the most predictive indices.</div>'
-          )
         } else {
-          lines <- c(lines, '<div class="warn">⚠️ No ML results available. ',
-            'Run models in the Machine Learning tab first.</div>')
+          lines <- c(lines, '<div class="warn">⚠️ No ML results. Run models in the Machine Learning tab first.</div>')
         }
       }
 
-      # ── Footer ───────────────────────────────────────────────
-      incProgress(0.05, "Finalising…")
+      # ── FOOTER ───────────────────────────────────────────────
+      incProgress(0.04, "Finalising report...")
       lines <- c(lines,
         '<hr class="section-divider">',
         '<div class="footer">',
         sprintf('<p><b>%s</b></p>', htmltools::htmlEscape(input$rep_title)),
-        '<p>Generated by the <b>Dry Bean Drone Analytics Platform</b></p>',
+        sprintf('<p>Experiment: %s &nbsp;·&nbsp; Generated: %s</p>',
+          htmltools::htmlEscape(exp_txt), format(Sys.time(),"%Y-%m-%d %H:%M")),
+        '<p>Generated by <b>AllInOne Phenomics</b> &mdash; Dry Bean Breeding &amp; ',
+        'Computational Biology Program &mdash; University of Guelph</p>',
         '<p><a href="https://www.uogbeans.com">www.uogbeans.com</a> &nbsp;·&nbsp; ',
-        'University of Guelph Dry Bean Breeding &amp; Computational Biology &nbsp;·&nbsp; ',
-        sprintf('%s</p>', format(Sys.time(), "%Y-%m-%d")),
-        '<p style="font-size:10px;margin-top:6px;color:#bbb;">',
-        'This report was automatically generated. All analyses should be reviewed ',
-        'by a qualified researcher before making breeding decisions.</p>',
+        '<a href="mailto:myoosefz@uoguelph.ca">myoosefz@uoguelph.ca</a></p>',
+        '<p style="font-size:10.5px;margin-top:8px;color:#bbb;">',
+        'This report was automatically generated by AllInOne Phenomics. ',
+        'All analyses should be reviewed by a qualified researcher before making ',
+        'breeding or agronomic decisions. Vegetation index values depend on correct ',
+        'sensor calibration and image quality.</p>',
         '</div></body></html>'
       )
 
-      incProgress(0.05, "Writing HTML…")
+      incProgress(0.03, "Writing HTML file...")
       tmp <- tempfile(fileext=".html")
       writeLines(lines, tmp, useBytes=FALSE)
       rv$report_path  <- tmp
       rv$report_ready <- TRUE
     })
   })
+
 
   output$report_preview_ui <- renderUI({
     if (isTRUE(rv$report_ready)) {
