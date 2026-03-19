@@ -1721,15 +1721,15 @@ server <- function(input, output, session) {
     # Custom checker: compares SHA-256 hash of entered password to stored hash
     sha256_check <- function(user, password) {
       row <- creds[creds$user == user, , drop = FALSE]
-      if (nrow(row) == 0) return(data.frame())
+      if (nrow(row) == 0) return(list(result = FALSE))
       entered_hash <- tryCatch(
         digest::digest(password, algo = "sha256"),
         error = function(e) ""
       )
       if (nchar(entered_hash) > 0 && entered_hash == row$password[1]) {
-        row  # return the matching row — shinymanager uses this
+        list(result = TRUE, admin = isTRUE(row$admin[1]))
       } else {
-        data.frame()  # empty = wrong password
+        list(result = FALSE)
       }
     }
 
