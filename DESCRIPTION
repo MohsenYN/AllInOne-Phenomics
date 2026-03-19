@@ -1,0 +1,41 @@
+Package: DrybeanDroneApp
+Title: Dry Bean Drone Image Analysis Platform
+Version: 1.0.0
+Authors@R: person("Dry Bean Breeding & Computational Biology", "University of Guelph")
+Description: Full drone image analysis pipeline for RGB and multispectral imagery.
+    Includes soil masking, vegetation indices, field heatmaps, statistics,
+    PCA, clustering, genotype selection, and machine learning.
+License: MIT
+Imports:
+    shiny,
+    shinydashboard,
+    shinyWidgets,
+    shinyjs,
+    DT,
+    plotly,
+    ggplot2,
+    dplyr,
+    tidyr,
+    viridis,
+    terra,
+    sf,
+    openxlsx,
+    ggcorrplot,
+    scales,
+    RColorBrewer,
+    reshape2,
+    gridExtra,
+    rlang,
+    caret,
+    randomForest,
+    e1071,
+    gbm,
+    xgboost,
+    nnet,
+    glmnet,
+    kknn,
+    rpart,
+    naivebayes,
+    ipred,
+    MASS,
+    dendextendEncoding: UTF-8
