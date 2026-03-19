@@ -10,71 +10,59 @@
 # ============================================================
 
 # ── Authentication ─────────────────────────────────────────────
-# Credentials are loaded from environment variables, NOT from code.
-# Set them in a local .env file (never committed to GitHub) or
-# in shinyapps.io / server environment variable settings.
+# ── Authentication ─────────────────────────────────────────────
+# Passwords are stored as SHA-256 hashes — safe to publish on GitHub.
+# Nobody can read the real passwords from the hash.
 #
-# Local setup: create a file called .env in the app folder:
-#   ALLINONE_ADMIN_USER=mohsen
-#   ALLINONE_ADMIN_PASS=yourpassword
-#   ALLINONE_USER1=labmember1  ALLINONE_PASS1=pass1
-#   ALLINONE_USER2=user2       ALLINONE_PASS2=pass2
-#   (add as many ALLINONE_USERn / ALLINONE_PASSn pairs as needed)
+# TO CHANGE A PASSWORD:
+#   1. Open R and run:  digest::digest("NewPassword", algo="sha256")
+#   2. Copy the hash string into the password field below.
+#
+# TO ADD A USER: copy one of the user rows and change the username & hash.
+# TO REMOVE A USER: delete that row.
+# TO DISABLE AUTH: set USE_AUTH <- FALSE
 
-# Load .env file if it exists (local development)
-if (file.exists(".env")) {
-  env_lines <- readLines(".env", warn=FALSE)
-  env_lines <- env_lines[nzchar(trimws(env_lines)) & !grepl("^#", trimws(env_lines))]
-  for (line in env_lines) {
-    parts <- strsplit(line, "=", fixed=TRUE)[[1]]
-    if (length(parts) >= 2) {
-      key <- trimws(parts[1])
-      val <- trimws(paste(parts[-1], collapse="="))
-      do.call(Sys.setenv, setNames(list(val), key))
-    }
-  }
-}
+# Install shinymanager if needed
+if (!requireNamespace("shinymanager", quietly=TRUE))
+  tryCatch(install.packages("shinymanager", repos="https://cloud.r-project.org"),
+           error=function(e) NULL)
 
-# Build credentials table from environment variables
-build_credentials <- function() {
-  rows <- list()
+USE_AUTH <- requireNamespace("shinymanager", quietly=TRUE)
 
-  # Admin account
-  admin_user <- Sys.getenv("ALLINONE_ADMIN_USER", "admin")
-  admin_pass <- Sys.getenv("ALLINONE_ADMIN_PASS", "")
-
-  if (nchar(admin_pass) == 0) {
-    # No password set — app runs WITHOUT authentication (local dev mode)
-    return(NULL)
-  }
-
-  rows[[1]] <- data.frame(user=admin_user, password=admin_pass,
-                           admin=TRUE, stringsAsFactors=FALSE)
-
-  # Additional users: ALLINONE_USER1/PASS1, ALLINONE_USER2/PASS2, ...
-  i <- 1
-  repeat {
-    u <- Sys.getenv(paste0("ALLINONE_USER", i), "")
-    p <- Sys.getenv(paste0("ALLINONE_PASS", i), "")
-    if (nchar(u) == 0) break
-    rows[[length(rows)+1]] <- data.frame(user=u, password=p,
-                                          admin=FALSE, stringsAsFactors=FALSE)
-    i <- i + 1
-  }
-  do.call(rbind, rows)
-}
-
-# Load shinymanager if credentials are configured
-USE_AUTH <- FALSE
-creds    <- build_credentials()
-if (!is.null(creds) && requireNamespace("shinymanager", quietly=TRUE)) {
+if (USE_AUTH) {
   library(shinymanager)
-  USE_AUTH <- TRUE
-  message("✅ Authentication enabled for: ", paste(creds$user, collapse=", "))
-} else if (!is.null(creds)) {
-  message("⚠️  shinymanager not installed — run install_packages.R to enable auth.")
+
+  # ── USER CREDENTIALS ─────────────────────────────────────────
+  # Passwords are SHA-256 hashes. Current passwords are shown in comments
+  # but only the hash is stored — the comment is for your reference only.
+  # Delete the comment once you change the password!
+  #
+  # Generate a new hash in R:
+  #   digest::digest("YourNewPassword", algo="sha256")
+
+  creds <- data.frame(
+    user     = c(
+      "MYN",          
+      "DBBCB",
+      "Public"           
+    ),
+    # SHA-256 hashes — real passwords shown in comments for setup reference.
+    # After setup, delete the comments so passwords are not visible.
+    # Generate new hash in R: digest::digest("NewPassword", algo="sha256")
+    password = c(
+      "01b9473f7b2196a5f4a1742590147a97421afff9f32f89bf4d0c955721db67ca", 
+      "4a77b160b56795298e26e4e45a9680761c750736336cb8d7880d11f68003141e", 
+      "fb1f19e69d1ca0a166ce8228eb11515461474ed1cd24ee96f8cf190744eec5c1"  #Free
+    ),
+    admin    = c(TRUE, FALSE, FALSE),
+    stringsAsFactors = FALSE
+  )
+
+  message("✅ Authentication enabled — ", nrow(creds), " users configured.")
 } else {
-  message("ℹ️  No ALLINONE_ADMIN_PASS set — running without authentication (local mode).")
+  creds    <- NULL
+  USE_AUTH <- FALSE
+  message("⚠️  shinymanager not available — running without authentication.")
 }
 
 # ── Upload limit (4 GB local; shinyapps.io caps at ~1 GB) ────
@@ -1553,7 +1541,7 @@ server <- function(input, output, session) {
   # ── Authenticate session if auth is enabled ──────────────────
   if (USE_AUTH) {
     res_auth <- shinymanager::secure_server(
-      check_credentials = shinymanager::check_credentials(creds)
+      check_credentials = shinymanager::check_credentials(creds, password_algo='sha256')
     )
     # Log usage: who logged in and when
     observe({
