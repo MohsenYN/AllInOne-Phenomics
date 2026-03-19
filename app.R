@@ -31,6 +31,8 @@ USE_AUTH <- requireNamespace("shinymanager", quietly=TRUE)
 
 if (USE_AUTH) {
   library(shinymanager)
+  if (!requireNamespace('digest',quietly=TRUE)) install.packages('digest')
+  library(digest)
 
   # ── USER CREDENTIALS ─────────────────────────────────────────
   # Passwords are SHA-256 hashes. Current passwords are shown in comments
@@ -40,23 +42,29 @@ if (USE_AUTH) {
   # Generate a new hash in R:
   #   digest::digest("YourNewPassword", algo="sha256")
 
+  # Passwords stored as SHA-256 hashes (safe on GitHub)
+  # Generate hash: digest::digest("YourPassword", algo="sha256")
   creds <- data.frame(
-    user     = c(
-      "MYN",          
+    user = c(
+      "MYN",
       "DBBCB",
-      "Public"           
+      "Public"
     ),
-    # SHA-256 hashes — real passwords shown in comments for setup reference.
-    # After setup, delete the comments so passwords are not visible.
-    # Generate new hash in R: digest::digest("NewPassword", algo="sha256")
     password = c(
-      "01b9473f7b2196a5f4a1742590147a97421afff9f32f89bf4d0c955721db67ca", 
-      "4a77b160b56795298e26e4e45a9680761c750736336cb8d7880d11f68003141e", 
-      "fb1f19e69d1ca0a166ce8228eb11515461474ed1cd24ee96f8cf190744eec5c1"  #Free
+      "01b9473f7b2196a5f4a1742590147a97421afff9f32f89bf4d0c955721db67ca",
+      "4a77b160b56795298e26e4e45a9680761c750736336cb8d7880d11f68003141e",
+      "fb1f19e69d1ca0a166ce8228eb11515461474ed1cd24ee96f8cf190744eec5c1"
     ),
     admin    = c(TRUE, FALSE, FALSE),
     stringsAsFactors = FALSE
   )
+
+  message("✅ Authentication enabled — ", nrow(creds), " users configured.")
+} else {
+  creds    <- NULL
+  USE_AUTH <- FALSE
+  message("⚠️  shinymanager not available — running without authentication.")
+}
 
 # ── Upload limit (4 GB local; shinyapps.io caps at ~1 GB) ────
 options(shiny.maxRequestSize = 4 * 1024^3)
@@ -1662,7 +1670,22 @@ server <- function(input, output, session) {
   # ── Authenticate session if auth is enabled ──────────────────
   if (USE_AUTH) {
     res_auth <- shinymanager::secure_server(
-      check_credentials = shinymanager::check_credentials(creds)
+      check_credentials = (function(creds) {
+        function(user, password) {
+          row <- creds[creds$user == user, , drop=FALSE]
+          if (nrow(row) == 0) return(FALSE)
+          # Compare sha256 hash of entered password to stored hash
+          entered_hash <- tryCatch(
+            digest::digest(password, algo="sha256"),
+            error = function(e) ""
+          )
+          if (entered_hash == row$password[1]) {
+            list(result=TRUE, admin=isTRUE(row$admin[1]))
+          } else {
+            FALSE
+          }
+        }
+      })(creds)
     )
     # Log usage: who logged in and when
     observe({
