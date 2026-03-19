@@ -83,8 +83,6 @@ AllInOne-Phenomics/
 ├── README.md                      # This file
 ├── www/
 │   └── logo.png                   # Lab logo (required for sidebar)
-├── Rstudio_RGB_drone_code_Sept_24_2025_updated.R
-└── Rstudio_Multispectral_drone_code_Sept_24_2025_Updated.R
 ```
 
 ---
