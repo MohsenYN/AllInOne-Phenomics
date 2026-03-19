@@ -1545,18 +1545,23 @@ server <- function(input, output, session) {
     )
     # Log usage: who logged in and when
     observe({
-      user <- tryCatch(res_auth()$user, error=function(e) "unknown")
-      if (!is.null(user) && nchar(user) > 0) {
+      user <- tryCatch({
+        u <- res_auth()$user
+        if (is.null(u) || length(u) == 0 || !nzchar(u)) return()
+        u
+      }, error=function(e) return())
+      if (is.null(user)) return()
+      tryCatch({
         log_file <- "usage_log.csv"
         log_row  <- data.frame(
           timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-          user      = user,
+          user      = as.character(user[1]),
           tab       = tryCatch(isolate(input$sidebar), error=function(e) ""),
           stringsAsFactors = FALSE
         )
         write.table(log_row, log_file, append=TRUE, sep=",",
                     col.names=!file.exists(log_file), row.names=FALSE, quote=TRUE)
-      }
+      }, error=function(e) NULL)
     })
   }
 
