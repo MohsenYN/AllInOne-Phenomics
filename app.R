@@ -58,13 +58,6 @@ if (USE_AUTH) {
     stringsAsFactors = FALSE
   )
 
-  message("✅ Authentication enabled — ", nrow(creds), " users configured.")
-} else {
-  creds    <- NULL
-  USE_AUTH <- FALSE
-  message("⚠️  shinymanager not available — running without authentication.")
-}
-
 # ── Upload limit (4 GB local; shinyapps.io caps at ~1 GB) ────
 options(shiny.maxRequestSize = 4 * 1024^3)
 
@@ -1518,18 +1511,146 @@ raw_ui <- dashboardPage(
 ui <- if (USE_AUTH) {
   shinymanager::secure_app(
     raw_ui,
-    enable_admin = TRUE,           # admin can add/remove users via browser
+    enable_admin    = TRUE,
+    choose_language = FALSE,
+    background      = "linear-gradient(135deg,#0d0d1a 0%,#1a1a2e 35%,#0f3460 65%,#8B0000 100%)",
+
     tags_top = tags$div(
-      style = "text-align:center;padding:20px 0 10px;",
-      tags$img(src="www/logo.png", height="80px",
-               style="filter:drop-shadow(0 2px 8px rgba(0,0,0,0.3));"),
-      tags$h3("AllInOne Phenomics",
-              style="color:#CC0000;font-family:'Georgia',serif;margin:8px 0 2px;"),
-      tags$p("Dry Bean Breeding & Computational Biology · University of Guelph",
-             style="color:#555;font-size:12px;margin:0;")
-    ),
-    background  = "linear-gradient(135deg,#1a1a2e,#0f3460,#CC0000)",
-    choose_language = FALSE
+      # Inject login page custom CSS
+      tags$style(HTML("
+        @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700&family=Source+Sans+Pro:wght@300;400;600&display=swap');
+
+        /* Full-page background */
+        body { margin:0; padding:0;
+          background: linear-gradient(135deg,#0d0d1a 0%,#1a1a2e 35%,#0f3460 65%,#8B0000 100%) !important;
+          min-height: 100vh;
+        }
+
+        /* Animated floating particles */
+        body::before {
+          content:''; position:fixed; top:0; left:0; width:100%; height:100%;
+          background-image:
+            radial-gradient(circle at 20% 50%, rgba(204,0,0,0.08) 0%, transparent 50%),
+            radial-gradient(circle at 80% 20%, rgba(255,199,44,0.06) 0%, transparent 40%),
+            radial-gradient(circle at 50% 80%, rgba(15,52,96,0.4) 0%, transparent 50%);
+          pointer-events:none; z-index:0;
+        }
+
+        /* Login card */
+        #auth-panel,
+        .panel-auth {
+          background: rgba(255,255,255,0.97) !important;
+          border-radius: 18px !important;
+          box-shadow: 0 30px 80px rgba(0,0,0,0.5), 0 0 0 1px rgba(255,199,44,0.2) !important;
+          border: none !important;
+          overflow: hidden;
+          animation: cardIn 0.6s cubic-bezier(0.34,1.56,0.64,1) both;
+          position: relative; z-index:1;
+        }
+        @keyframes cardIn {
+          from { opacity:0; transform: translateY(40px) scale(0.95); }
+          to   { opacity:1; transform: translateY(0)    scale(1); }
+        }
+
+        /* Top accent bar on card */
+        #auth-panel::before, .panel-auth::before {
+          content:'';
+          display:block; height:5px; width:100%;
+          background: linear-gradient(90deg, #CC0000, #FFC72C, #2d6a4f);
+        }
+
+        /* Input fields */
+        #auth-panel input, .panel-auth input {
+          border-radius: 8px !important;
+          border: 2px solid #e0e0e0 !important;
+          padding: 10px 14px !important;
+          font-size: 14px !important;
+          transition: border-color 0.2s, box-shadow 0.2s !important;
+          font-family: 'Source Sans Pro', sans-serif !important;
+        }
+        #auth-panel input:focus, .panel-auth input:focus {
+          border-color: #CC0000 !important;
+          box-shadow: 0 0 0 3px rgba(204,0,0,0.12) !important;
+          outline: none !important;
+        }
+
+        /* Login button */
+        #auth-panel .btn-primary,
+        .panel-auth .btn-primary,
+        #go_auth {
+          background: linear-gradient(135deg, #CC0000, #8B0000) !important;
+          border: none !important;
+          border-radius: 8px !important;
+          padding: 11px 28px !important;
+          font-size: 14px !important;
+          font-weight: 700 !important;
+          font-family: 'Source Sans Pro', sans-serif !important;
+          letter-spacing: 0.5px !important;
+          transition: all 0.25s !important;
+          box-shadow: 0 4px 15px rgba(204,0,0,0.35) !important;
+          width: 100% !important;
+        }
+        #auth-panel .btn-primary:hover,
+        .panel-auth .btn-primary:hover,
+        #go_auth:hover {
+          background: linear-gradient(135deg, #8B0000, #CC0000) !important;
+          transform: translateY(-2px) !important;
+          box-shadow: 0 8px 25px rgba(204,0,0,0.45) !important;
+        }
+
+        /* Labels */
+        #auth-panel label, .panel-auth label {
+          font-family: 'Source Sans Pro', sans-serif !important;
+          font-weight: 600 !important;
+          color: #1a1a2e !important;
+          font-size: 13px !important;
+          letter-spacing: 0.3px !important;
+        }
+
+        /* Hide default shinymanager logo/title */
+        #auth-panel > .panel > .panel-heading,
+        .panel-auth > .panel > .panel-heading { display:none !important; }
+      ")),
+
+      # Custom header inside the card
+      tags$div(
+        style = paste0(
+          "text-align:center;padding:28px 20px 8px;",
+          "background:linear-gradient(135deg,#1a1a2e,#0f3460);",
+          "margin:-1px -1px 0;"
+        ),
+        # Logo — using base64 embed so it works from GitHub download
+        tags$img(
+          src   = "www/logo.png",
+          height= "90px",
+          style = paste0(
+            "max-width:280px;object-fit:contain;",
+            "filter:drop-shadow(0 3px 12px rgba(0,0,0,0.6));",
+            "animation:logoPop 0.7s cubic-bezier(0.34,1.56,0.64,1) both;"
+          ),
+          onerror = "this.style.display='none';"
+        ),
+        tags$h2("AllInOne Phenomics",
+          style = paste0(
+            "font-family:'Playfair Display',serif;font-size:22px;",
+            "color:#FFC72C;margin:12px 0 4px;letter-spacing:0.5px;",
+            "text-shadow:0 2px 8px rgba(0,0,0,0.4);"
+          )
+        ),
+        tags$p("Dry Bean Breeding & Computational Biology",
+          style="color:rgba(255,255,255,0.8);font-size:12.5px;margin:0 0 2px;"),
+        tags$p("University of Guelph",
+          style="color:rgba(255,199,44,0.9);font-size:11.5px;font-weight:600;margin:0 0 18px;"),
+        tags$div(
+          style="display:flex;justify-content:center;gap:10px;margin-bottom:16px;",
+          tags$a(href="https://www.uogbeans.com", target="_blank",
+            style=paste0("color:#FFC72C;font-size:11px;font-weight:600;",
+                         "text-decoration:none;background:rgba(255,199,44,0.1);",
+                         "padding:3px 12px;border-radius:12px;border:1px solid rgba(255,199,44,0.3);"),
+            "🌐 uogbeans.com")
+        )
+      )
+    )
   )
 } else {
   raw_ui
@@ -1541,7 +1662,7 @@ server <- function(input, output, session) {
   # ── Authenticate session if auth is enabled ──────────────────
   if (USE_AUTH) {
     res_auth <- shinymanager::secure_server(
-      check_credentials = shinymanager::check_credentials(creds, password_algo='sha256')
+      check_credentials = shinymanager::check_credentials(creds)
     )
     # Log usage: who logged in and when
     observe({
