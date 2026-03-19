@@ -54,10 +54,10 @@
 
 ```r
 # Step 1 — install packages (run ONCE)
-source("https://raw.githubusercontent.com/YOUR_USERNAME/AllInOne-Phenomics/main/install_packages.R")
+source("https://raw.githubusercontent.com/MohsenYN/AllInOne-Phenomics/main/install_packages.R")
 
 # Step 2 — launch the app
-shiny::runGitHub("AllInOne-Phenomics", "YOUR_USERNAME")
+shiny::runGitHub("AllInOne-Phenomics", "MohsenYN")
 ```
 
 ### Run locally from downloaded files
