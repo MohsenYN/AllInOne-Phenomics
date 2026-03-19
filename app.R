@@ -487,7 +487,9 @@ raw_ui <- dashboardPage(
       menuItem("🔍  Data QC",             tabName = "dataQC",   icon = icon("check-circle")),
       menuItem("📡  Spectral Signatures",  tabName = "spectral", icon = icon("wave-square")),
       menuItem("📑  Report Generator",     tabName = "report",   icon = icon("file-alt")),
-      menuItem("💾  Export",             tabName = "export",   icon = icon("download"))
+      menuItem("💾  Export",             tabName = "export",   icon = icon("download")),
+      # Admin-only menu item — hidden for non-admins via server-side UI
+      uiOutput("admin_menu_item")
     ),
 
     tags$hr(style = "border-color:rgba(255,255,255,0.1); margin:8px 14px;"),
@@ -1479,6 +1481,53 @@ raw_ui <- dashboardPage(
       ),
 
       # ══════════════════════════════════════════════════════════
+      # TAB: ADMIN DASHBOARD (admin only)
+      # ══════════════════════════════════════════════════════════
+      tabItem(tabName = "admin",
+
+        fluidRow(
+          box(title="👥 Active Sessions & Login History", width=8,
+              solidHeader=TRUE, status="danger",
+            tags$div(style="font-size:12px;color:#666;margin-bottom:8px;",
+              "Live view of who has logged in and what they are doing.",
+              " Refreshes every 10 seconds automatically."),
+            actionButton("refresh_log", "🔄 Refresh Now",
+                         class="btn-warning btn-sm", style="margin-bottom:10px;"),
+            downloadButton("dl_usage_log", "⬇️ Download Full Log",
+                           class="btn-info btn-sm", style="margin-bottom:10px;margin-left:6px;"),
+            DTOutput("admin_log_tbl")
+          ),
+          box(title="📊 Usage Summary", width=4,
+              solidHeader=TRUE, status="primary",
+            uiOutput("admin_summary_ui"),
+            tags$hr(),
+            plotlyOutput("admin_tab_chart", height="220px")
+          )
+        ),
+
+        fluidRow(
+          box(title="📈 Activity Timeline — Logins per Day", width=8,
+              solidHeader=TRUE, status="success",
+            plotlyOutput("admin_timeline", height="260px")
+          ),
+          box(title="⚙️ Log Management", width=4,
+              solidHeader=TRUE, status="warning",
+            tags$div(style="background:#fff3cd;border-left:4px solid #e6a800;
+                            padding:10px;border-radius:4px;margin-bottom:12px;font-size:12px;",
+              tags$b("⚠️ Warning:"), " Clearing the log is permanent and cannot be undone."
+            ),
+            actionButton("clear_log", "🗑️ Clear Usage Log",
+                         class="btn-danger", style="width:100%;"),
+            tags$hr(),
+            tags$p(style="font-size:11.5px;color:#888;",
+              "Log file: usage_log.csv (saved in app working directory)"),
+            tags$p(style="font-size:11.5px;color:#888;",
+              "Each row = one tab visit. Timestamps in server local time.")
+          )
+        )
+      ),
+
+      # ══════════════════════════════════════════════════════════
       # TAB: EXPORT
       # ══════════════════════════════════════════════════════════
       tabItem(tabName = "export",
@@ -1669,44 +1718,89 @@ server <- function(input, output, session) {
 
   # ── Authenticate session if auth is enabled ──────────────────
   if (USE_AUTH) {
+    # Custom checker: compares SHA-256 hash of entered password to stored hash
+    sha256_check <- function(user, password) {
+      row <- creds[creds$user == user, , drop = FALSE]
+      if (nrow(row) == 0) return(data.frame())
+      entered_hash <- tryCatch(
+        digest::digest(password, algo = "sha256"),
+        error = function(e) ""
+      )
+      if (nchar(entered_hash) > 0 && entered_hash == row$password[1]) {
+        row  # return the matching row — shinymanager uses this
+      } else {
+        data.frame()  # empty = wrong password
+      }
+    }
+
     res_auth <- shinymanager::secure_server(
-      check_credentials = (function(creds) {
-        function(user, password) {
-          row <- creds[creds$user == user, , drop=FALSE]
-          if (nrow(row) == 0) return(FALSE)
-          # Compare sha256 hash of entered password to stored hash
-          entered_hash <- tryCatch(
-            digest::digest(password, algo="sha256"),
-            error = function(e) ""
-          )
-          if (entered_hash == row$password[1]) {
-            list(result=TRUE, admin=isTRUE(row$admin[1]))
-          } else {
-            FALSE
-          }
-        }
-      })(creds)
+      check_credentials = sha256_check
     )
-    # Log usage: who logged in and when
-    observe({
-      user <- tryCatch({
+    # ── Full usage tracking ─────────────────────────────────────
+    current_user <- reactive({
+      tryCatch({
         u <- res_auth()$user
-        if (is.null(u) || length(u) == 0 || !nzchar(u)) return()
-        u
-      }, error=function(e) return())
-      if (is.null(user)) return()
+        if (is.null(u) || length(u) == 0 || !nzchar(u)) return("")
+        as.character(u[1])
+      }, error=function(e) "")
+    })
+
+    is_admin <- reactive({
+      tryCatch({
+        adm <- res_auth()$admin
+        isTRUE(adm)
+      }, error=function(e) FALSE)
+    })
+
+    # Show/hide Admin menu item based on role
+    output$admin_menu_item <- renderUI({
+      req(is_admin())
+      if (is_admin())
+        menuItem("🛡️  Admin Dashboard", tabName="admin",
+                 icon=icon("user-shield"))
+      else NULL
+    })
+
+    # Log every tab change
+    write_log <- function(user, action, detail="") {
+      if (!nzchar(user)) return()
       tryCatch({
         log_file <- "usage_log.csv"
         log_row  <- data.frame(
           timestamp = format(Sys.time(), "%Y-%m-%d %H:%M:%S"),
-          user      = as.character(user[1]),
-          tab       = tryCatch(isolate(input$sidebar), error=function(e) ""),
+          user      = user,
+          action    = action,
+          detail    = detail,
+          session   = session$token,
           stringsAsFactors = FALSE
         )
         write.table(log_row, log_file, append=TRUE, sep=",",
-                    col.names=!file.exists(log_file), row.names=FALSE, quote=TRUE)
+                    col.names=!file.exists(log_file),
+                    row.names=FALSE, quote=TRUE)
       }, error=function(e) NULL)
+    }
+
+    # Log login event
+    observeEvent(current_user(), {
+      u <- current_user()
+      if (nzchar(u)) write_log(u, "LOGIN", "Session started")
+    }, once=TRUE, ignoreInit=FALSE)
+
+    # Log every tab navigation
+    observeEvent(input$sidebar, {
+      u <- current_user()
+      if (nzchar(u) && !is.null(input$sidebar))
+        write_log(u, "TAB_VISIT", input$sidebar)
     })
+
+    # Log key actions
+    observeEvent(input$load_data,    { write_log(current_user(), "ACTION", "Load All Data") })
+    observeEvent(input$run_indices,  { write_log(current_user(), "ACTION", "Calculate Indices") })
+    observeEvent(input$render_maps,  { write_log(current_user(), "ACTION", "Render Field Maps") })
+    observeEvent(input$run_ml,       { write_log(current_user(), "ACTION", "Run ML Models") })
+    observeEvent(input$gen_report,   { write_log(current_user(), "ACTION", "Generate Report") })
+    observeEvent(input$dl_csv,       { write_log(current_user(), "EXPORT", "Download CSV") })
+    observeEvent(input$dl_excel,     { write_log(current_user(), "EXPORT", "Download Excel") })
   }
 
 
@@ -4895,6 +4989,171 @@ server <- function(input, output, session) {
       file.copy(rv$report_path, file)
     }
   )
+
+
+  # ═══════════════════════════════════════════════════════════
+  # ADMIN DASHBOARD SERVER
+  # ═══════════════════════════════════════════════════════════
+
+  # Reactive log reader — auto-refreshes every 10s or on button click
+  log_data <- reactivePoll(
+    intervalMillis = 10000,
+    session        = session,
+    checkFunc = function() {
+      lf <- "usage_log.csv"
+      if (file.exists(lf)) file.info(lf)$mtime else Sys.time()
+    },
+    valueFunc = function() {
+      lf <- "usage_log.csv"
+      if (!file.exists(lf)) return(data.frame(
+        timestamp="—", user="—", action="—", detail="—", session="—",
+        stringsAsFactors=FALSE))
+      tryCatch({
+        df <- read.csv(lf, stringsAsFactors=FALSE)
+        df <- df[order(df$timestamp, decreasing=TRUE), ]
+        df
+      }, error=function(e) data.frame(
+        timestamp="Error reading log", user="", action="", detail="", session="",
+        stringsAsFactors=FALSE))
+    }
+  )
+
+  # Force refresh on button click
+  observeEvent(input$refresh_log, { log_data() })
+
+  # Main log table
+  output$admin_log_tbl <- renderDT({
+    df <- log_data()
+    # Colour-code actions
+    datatable(
+      df[, intersect(c("timestamp","user","action","detail"), names(df)), drop=FALSE],
+      options  = list(pageLength=20, scrollX=TRUE, order=list(list(0,"desc"))),
+      rownames = FALSE,
+      class    = "table-striped compact"
+    ) %>%
+      formatStyle("user",
+        backgroundColor = styleEqual(
+          c("MYN","DBBCB","Public"),
+          c("rgba(204,0,0,0.08)","rgba(15,52,96,0.08)","rgba(45,106,79,0.08)")
+        ),
+        fontWeight = "bold"
+      ) %>%
+      formatStyle("action",
+        color = styleEqual(
+          c("LOGIN","TAB_VISIT","ACTION","EXPORT"),
+          c("#2d6a4f",   "#0f3460",    "#CC0000",  "#e6a800")
+        ),
+        fontWeight = "600"
+      )
+  })
+
+  # Summary boxes
+  output$admin_summary_ui <- renderUI({
+    df <- log_data()
+    if (nrow(df) == 0 || df$timestamp[1] == "—") {
+      return(tags$p("No log data yet.", style="color:#888;font-size:12px;"))
+    }
+
+    n_sessions  <- length(unique(df$session[df$action=="LOGIN"]))
+    n_users     <- length(unique(df$user))
+    n_actions   <- sum(df$action == "ACTION", na.rm=TRUE)
+    n_exports   <- sum(df$action == "EXPORT", na.rm=TRUE)
+    last_active <- if(nrow(df)>0) df$timestamp[1] else "—"
+
+    # Most active user
+    user_counts <- sort(table(df$user), decreasing=TRUE)
+    top_user    <- if(length(user_counts)>0) names(user_counts)[1] else "—"
+
+    tags$div(
+      tags$div(style="display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-bottom:8px;",
+        tags$div(style="background:#1a1a2e;color:#FFC72C;border-radius:8px;padding:10px;text-align:center;",
+          tags$div(style="font-size:22px;font-weight:700;", n_sessions),
+          tags$div(style="font-size:10px;opacity:0.8;", "Total Sessions")),
+        tags$div(style="background:#0f3460;color:#fff;border-radius:8px;padding:10px;text-align:center;",
+          tags$div(style="font-size:22px;font-weight:700;", n_users),
+          tags$div(style="font-size:10px;opacity:0.8;", "Unique Users")),
+        tags$div(style="background:#CC0000;color:#fff;border-radius:8px;padding:10px;text-align:center;",
+          tags$div(style="font-size:22px;font-weight:700;", n_actions),
+          tags$div(style="font-size:10px;opacity:0.8;", "Actions Run")),
+        tags$div(style="background:#2d6a4f;color:#fff;border-radius:8px;padding:10px;text-align:center;",
+          tags$div(style="font-size:22px;font-weight:700;", n_exports),
+          tags$div(style="font-size:10px;opacity:0.8;", "Exports"))
+      ),
+      tags$div(style="font-size:11.5px;color:#555;margin-top:4px;",
+        tags$b("Most active: "), top_user, tags$br(),
+        tags$b("Last activity: "), last_active)
+    )
+  })
+
+  # Tab usage chart
+  output$admin_tab_chart <- renderPlotly({
+    df <- log_data()
+    if (nrow(df) == 0 || !"action" %in% names(df)) return(NULL)
+    tabs <- df[df$action == "TAB_VISIT" & nzchar(df$detail), ]
+    if (nrow(tabs) == 0) return(NULL)
+    tc  <- as.data.frame(sort(table(tabs$detail), decreasing=TRUE))
+    names(tc) <- c("Tab","Count")
+    tc <- head(tc, 12)
+    plot_ly(tc, x=~Count, y=~reorder(Tab,Count), type="bar",
+            orientation="h",
+            marker=list(color=C_RED),
+            hovertemplate="%{y}: %{x} visits<extra></extra>") %>%
+      layout(title=list(text="Tab Visits",font=list(size=12,color=C_DARK)),
+             xaxis=list(title=""),yaxis=list(title=""),
+             margin=list(l=100), paper_bgcolor="white") %>%
+      config(displaylogo=FALSE)
+  })
+
+  # Activity timeline
+  output$admin_timeline <- renderPlotly({
+    df <- log_data()
+    if (nrow(df) == 0 || df$timestamp[1] == "—") return(NULL)
+    logins <- df[df$action == "LOGIN", ]
+    if (nrow(logins) == 0) return(NULL)
+    logins$date <- as.Date(substr(logins$timestamp, 1, 10))
+    daily <- as.data.frame(table(logins$date, logins$user))
+    names(daily) <- c("Date","User","Count")
+    daily$Date  <- as.Date(as.character(daily$Date))
+    daily <- daily[daily$Count > 0, ]
+    pal  <- c(MYN="#CC0000", DBBCB="#0f3460", Public="#2d6a4f")
+
+    fig <- plot_ly()
+    for (u in unique(daily$User)) {
+      sub <- daily[daily$User == u, ]
+      fig <- fig %>% add_trace(
+        x=sub$Date, y=sub$Count, type="scatter", mode="lines+markers",
+        name=u, line=list(width=2.5),
+        marker=list(size=7),
+        hovertemplate=paste0(u,": %{y} login(s) on %{x}<extra></extra>")
+      )
+    }
+    fig %>% layout(
+      title=list(text="Daily Logins by User", font=list(size=12,color=C_DARK)),
+      xaxis=list(title=""), yaxis=list(title="Logins"),
+      legend=list(orientation="h"),
+      paper_bgcolor="white"
+    ) %>% config(displaylogo=FALSE)
+  })
+
+  # Download full log
+  output$dl_usage_log <- downloadHandler(
+    filename = function() paste0("AllInOne_UsageLog_", Sys.Date(), ".csv"),
+    content  = function(file) {
+      lf <- "usage_log.csv"
+      if (file.exists(lf)) file.copy(lf, file)
+      else writeLines("timestamp,user,action,detail,session", file)
+    }
+  )
+
+  # Clear log (admin only)
+  observeEvent(input$clear_log, {
+    req(is_admin())
+    tryCatch({
+      if (file.exists("usage_log.csv")) file.remove("usage_log.csv")
+      showNotification("✅ Usage log cleared.", type="message", duration=3)
+    }, error=function(e)
+      showNotification(paste("❌", e$message), type="error"))
+  })
 
 } # end server
 
