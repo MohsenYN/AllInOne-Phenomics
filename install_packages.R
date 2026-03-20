@@ -38,7 +38,7 @@ viz <- c(
   "ggplot2", "plotly", "ggcorrplot", "viridis", "RColorBrewer",
   "dplyr", "tidyr", "reshape2", "gridExtra", "dendextend",
   "openxlsx", "readr", "tibble", "scales", "rlang",
-  "base64enc", "digest"
+  "base64enc", "digest", "httr"
 )
 for (pkg in viz) install_if_missing(pkg)
 
@@ -76,7 +76,7 @@ required <- c(
   "shiny", "shinydashboard", "shinyWidgets", "shinyjs", "shinymanager",
   "DT", "terra", "sf", "ggplot2", "plotly", "ggcorrplot",
   "viridis", "RColorBrewer", "dplyr", "tidyr", "openxlsx",
-  "dendextend", "base64enc", "digest", "caret", "randomForest"
+  "dendextend", "base64enc", "digest", "httr", "caret", "randomForest"
 )
 missing_v <- required[!sapply(required, requireNamespace, quietly = TRUE)]
 
