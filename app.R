@@ -473,6 +473,7 @@ raw_ui <- dashboardPage(
     sidebarMenu(
       id = "sidebar",
       menuItem("🏠  Welcome",           tabName = "welcome",   icon = icon("home")),
+      menuItem("🛩️  WebODM Processing",  tabName = "webodm",    icon = icon("plane")),
       menuItem("📁  Data Upload",        tabName = "upload",    icon = icon("upload")),
       menuItem("🌿  Mosaic & Soil Mask", tabName = "mosaic",   icon = icon("layer-group")),
       menuItem("🗺️  Plot Grid",          tabName = "grid",      icon = icon("th")),
@@ -709,6 +710,233 @@ raw_ui <- dashboardPage(
                 tags$h5(s[[2]]), tags$p(s[[3]])
               ))
             })
+          )
+        )
+      ),
+
+      # ══════════════════════════════════════════════════════════
+      # TAB: WEBODM
+      # ══════════════════════════════════════════════════════════
+      tabItem(tabName = "webodm",
+
+        # ── Pipeline banner ─────────────────────────────────────
+        fluidRow(
+          column(12,
+            tags$div(
+              style=paste0(
+                "background:linear-gradient(135deg,#1a1a2e,#0f3460);",
+                "border-radius:10px;padding:18px 24px;margin-bottom:16px;",
+                "color:#fff;display:flex;align-items:center;gap:20px;"
+              ),
+              tags$div(style="font-size:28px;","🛩️"),
+              tags$div(
+                tags$h4("WebODM — Drone Image Processing",
+                  style="margin:0 0 4px;font-family:'Playfair Display',serif;color:#FFC72C;font-size:17px;"),
+                tags$p(style="margin:0;font-size:12.5px;opacity:0.85;",
+                  "WebODM converts your raw drone photos into a georeferenced orthomosaic (.tif). ",
+                  "Upload that .tif into AllInOne Phenomics for full analysis.")
+              )
+            )
+          )
+        ),
+
+        # ── Pipeline flow diagram ────────────────────────────────
+        fluidRow(
+          box(title="📋 Processing Pipeline", width=12, solidHeader=TRUE, status="danger",
+            tags$div(
+              style="display:flex;align-items:center;justify-content:center;gap:0;flex-wrap:wrap;padding:10px 0;",
+              # Step 1
+              tags$div(style="text-align:center;padding:14px 18px;background:#1a1a2e;border-radius:10px;min-width:130px;",
+                tags$div(style="font-size:26px;","📸"),
+                tags$div(style="color:#FFC72C;font-weight:700;font-size:13px;margin-top:4px;","Raw Photos"),
+                tags$div(style="color:rgba(255,255,255,0.6);font-size:11px;","JPG/TIF from drone")
+              ),
+              tags$div(style="font-size:24px;color:#CC0000;padding:0 8px;","→"),
+              # Step 2
+              tags$div(style="text-align:center;padding:14px 18px;background:#0f3460;border-radius:10px;min-width:130px;border:2px solid #FFC72C;",
+                tags$div(style="font-size:26px;","🛩️"),
+                tags$div(style="color:#FFC72C;font-weight:700;font-size:13px;margin-top:4px;","WebODM"),
+                tags$div(style="color:rgba(255,255,255,0.6);font-size:11px;","Photogrammetry")
+              ),
+              tags$div(style="font-size:24px;color:#CC0000;padding:0 8px;","→"),
+              # Step 3
+              tags$div(style="text-align:center;padding:14px 18px;background:#2d6a4f;border-radius:10px;min-width:130px;",
+                tags$div(style="font-size:26px;","🗺️"),
+                tags$div(style="color:#FFC72C;font-weight:700;font-size:13px;margin-top:4px;","Orthomosaic"),
+                tags$div(style="color:rgba(255,255,255,0.6);font-size:11px;",".tif GeoTIFF file")
+              ),
+              tags$div(style="font-size:24px;color:#CC0000;padding:0 8px;","→"),
+              # Step 4
+              tags$div(style="text-align:center;padding:14px 18px;background:#CC0000;border-radius:10px;min-width:130px;",
+                tags$div(style="font-size:26px;","🌿"),
+                tags$div(style="color:#fff;font-weight:700;font-size:13px;margin-top:4px;","AllInOne"),
+                tags$div(style="color:rgba(255,255,255,0.8);font-size:11px;","Phenomics analysis")
+              )
+            )
+          )
+        ),
+
+        fluidRow(
+          # ── Option 1: Cloud ─────────────────────────────────────
+          box(title="☁️ Option 1 — WebODM Cloud (No Installation)", width=4,
+              solidHeader=TRUE, status="success",
+            tags$div(
+              style="background:#e8f5e9;border-radius:8px;padding:14px;margin-bottom:12px;",
+              tags$p(style="margin:0 0 4px;font-weight:700;font-size:13px;color:#1b4332;",
+                "✅ Recommended — works everywhere"),
+              tags$p(style="margin:0;font-size:12px;color:#2d4a3e;",
+                "Upload photos to WebODM Lightning cloud. No installation. ",
+                "Pay per task (~$0.01–0.10 per image). Download the .tif when done.")
+            ),
+            tags$div(style="text-align:center;margin:12px 0;",
+              tags$a(
+                href="https://webodm.net", target="_blank",
+                class="btn btn-success btn-lg",
+                style="width:100%;font-weight:700;",
+                "🌐 Open WebODM Lightning"
+              )
+            ),
+            tags$hr(),
+            tags$p(style="font-size:12px;color:#555;font-weight:600;","Steps:"),
+            tags$ol(style="font-size:12px;color:#555;padding-left:18px;",
+              tags$li("Create a free account at webodm.net"),
+              tags$li("Upload your raw drone photos"),
+              tags$li("Start a processing task (select outputs: Orthophoto)"),
+              tags$li("Download the .tif when complete"),
+              tags$li("Upload it in the ", tags$b("Data Upload"), " tab here")
+            )
+          ),
+
+          # ── Option 2: Local Docker ───────────────────────────────
+          box(title="🐳 Option 2 — Local Docker (Free, Offline)", width=4,
+              solidHeader=TRUE, status="primary",
+            tags$div(
+              style="background:#e3f2fd;border-radius:8px;padding:14px;margin-bottom:12px;",
+              tags$p(style="margin:0 0 4px;font-weight:700;font-size:13px;color:#0d47a1;",
+                "🔒 Fully local — data stays on your computer"),
+              tags$p(style="margin:0;font-size:12px;color:#1565c0;",
+                "Requires Docker Desktop. All processing is done locally. Free forever.")
+            ),
+            uiOutput("webodm_local_status"),
+            tags$div(style="text-align:center;margin:10px 0;",
+              tags$a(
+                href="http://localhost:8000", target="_blank",
+                class="btn btn-primary btn-lg",
+                style="width:100%;font-weight:700;",
+                "🖥️ Open Local WebODM"
+              )
+            ),
+            tags$hr(),
+            tags$p(style="font-size:12px;color:#555;font-weight:600;","Installation (run once):"),
+            tags$pre(
+              style="background:#1a1a2e;color:#FFC72C;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;",
+              "# 1. Install Docker Desktop
+#    https://www.docker.com/products/docker-desktop
+
+# 2. Install WebODM
+git clone https://github.com/OpenDroneMap/WebODM
+cd WebODM
+./webodm.sh start
+
+# 3. Open: http://localhost:8000"
+            )
+          ),
+
+          # ── Option 3: ODM Command Line ───────────────────────────
+          box(title="⌨️ Option 3 — OpenDroneMap CLI", width=4,
+              solidHeader=TRUE, status="warning",
+            tags$div(
+              style="background:#fff3cd;border-radius:8px;padding:14px;margin-bottom:12px;",
+              tags$p(style="margin:0 0 4px;font-weight:700;font-size:13px;color:#856404;",
+                "⚡ Fastest for batch processing"),
+              tags$p(style="margin:0;font-size:12px;color:#6d4c00;",
+                "Command-line tool. No web interface. Runs from terminal. ",
+                "Best for processing many datasets automatically.")
+            ),
+            tags$p(style="font-size:12px;color:#555;font-weight:600;","Quick start:"),
+            tags$pre(
+              style="background:#1a1a2e;color:#FFC72C;padding:10px;border-radius:6px;font-size:11px;overflow-x:auto;",
+              "# Requires Docker
+docker run -ti --rm \
+  -v /path/to/photos:/datasets/project \
+  opendronemap/odm \
+  --project-path /datasets project \
+  --orthophoto-resolution 2
+
+# Output: project/odm_orthophoto/
+#         odm_orthophoto.tif"
+            ),
+            tags$div(style="text-align:center;margin:10px 0;",
+              tags$a(href="https://docs.opendronemap.org", target="_blank",
+                class="btn btn-warning btn-sm", style="font-weight:700;",
+                "📖 ODM Documentation")
+            )
+          )
+        ),
+
+        # ── WebODM embedded iframe ───────────────────────────────
+        fluidRow(
+          box(title="🖥️ Local WebODM Interface (requires WebODM running at localhost:8000)",
+              width=12, solidHeader=TRUE, status="danger",
+            uiOutput("webodm_iframe_ui")
+          )
+        ),
+
+        # ── Tips ────────────────────────────────────────────────
+        fluidRow(
+          box(title="💡 Tips for Best Results", width=6, solidHeader=TRUE, status="success",
+            tags$div(style="font-size:13px;",
+              tags$h5(style="color:#2d6a4f;margin-top:0;","📸 Photo capture"),
+              tags$ul(
+                tags$li("Fly at consistent altitude (e.g. 30–50 m AGL)"),
+                tags$li("Use 75–85% front overlap and 65–75% side overlap"),
+                tags$li("Fly in calm conditions — avoid wind > 20 km/h"),
+                tags$li("Capture during peak solar hours (10am–2pm) for consistent lighting"),
+                tags$li("Include GCPs (ground control points) for sub-cm accuracy")
+              ),
+              tags$h5(style="color:#2d6a4f;","⚙️ WebODM settings"),
+              tags$ul(
+                tags$li(tags$b("Resolution:"), " 2–5 cm/px for plot-level analysis"),
+                tags$li(tags$b("Quality:"), " High or Ultra for multispectral data"),
+                tags$li(tags$b("Outputs:"), " Enable Orthophoto; DSM optional"),
+                tags$li(tags$b("Multispectral:"), " Enable radiometric calibration panel")
+              )
+            )
+          ),
+          box(title="📋 Supported File Formats", width=6, solidHeader=TRUE, status="primary",
+            tags$table(
+              style="width:100%;font-size:13px;",
+              tags$thead(
+                tags$tr(
+                  tags$th(style="padding:6px;background:#1a1a2e;color:#FFC72C;", "Format"),
+                  tags$th(style="padding:6px;background:#1a1a2e;color:#FFC72C;", "Source"),
+                  tags$th(style="padding:6px;background:#1a1a2e;color:#FFC72C;", "Compatible")
+                )
+              ),
+              tags$tbody(
+                tags$tr(tags$td(style="padding:6px;","GeoTIFF (.tif)"),
+                         tags$td(style="padding:6px;","WebODM / QGIS"),
+                         tags$td(style="padding:6px;color:#2d6a4f;font-weight:700;","✅ Yes")),
+                tags$tr(style="background:#f9f9f9;",
+                         tags$td(style="padding:6px;","RGB 3-band .tif"),
+                         tags$td(style="padding:6px;","DJI / Parrot"),
+                         tags$td(style="padding:6px;color:#2d6a4f;font-weight:700;","✅ Yes")),
+                tags$tr(tags$td(style="padding:6px;","Multispectral 5-band .tif"),
+                         tags$td(style="padding:6px;","MicaSense RedEdge"),
+                         tags$td(style="padding:6px;color:#2d6a4f;font-weight:700;","✅ Yes")),
+                tags$tr(style="background:#f9f9f9;",
+                         tags$td(style="padding:6px;","Raw .JPG photos"),
+                         tags$td(style="padding:6px;","Any camera"),
+                         tags$td(style="padding:6px;color:#CC0000;font-weight:700;","❌ Process in WebODM first")),
+                tags$tr(tags$td(style="padding:6px;","Pix4D output .tif"),
+                         tags$td(style="padding:6px;","Pix4Dmapper"),
+                         tags$td(style="padding:6px;color:#2d6a4f;font-weight:700;","✅ Yes")),
+                tags$tr(style="background:#f9f9f9;",
+                         tags$td(style="padding:6px;","Agisoft .tif export"),
+                         tags$td(style="padding:6px;","Metashape"),
+                         tags$td(style="padding:6px;color:#2d6a4f;font-weight:700;","✅ Yes"))
+              )
+            )
           )
         )
       ),
@@ -5475,6 +5703,85 @@ server <- function(input, output, session) {
       showNotification("✅ Usage log cleared.", type="message", duration=3)
     }, error=function(e)
       showNotification(paste("❌", e$message), type="error"))
+  })
+
+
+  # ═══════════════════════════════════════════════════════════
+  # WEBODM SERVER
+  # ═══════════════════════════════════════════════════════════
+
+  # Check if local WebODM is reachable
+  webodm_reachable <- reactivePoll(
+    intervalMillis = 15000,
+    session        = session,
+    checkFunc = function() Sys.time(),
+    valueFunc = function() {
+      tryCatch({
+        con <- url("http://localhost:8000", open="r", blocking=FALSE)
+        close(con)
+        TRUE
+      }, error=function(e) FALSE)
+    }
+  )
+
+  output$webodm_local_status <- renderUI({
+    ok <- tryCatch(webodm_reachable(), error=function(e) FALSE)
+    if (isTRUE(ok)) {
+      tags$div(
+        style="background:#c7f9cc;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;color:#1b4332;font-weight:600;",
+        "🟢 WebODM detected at localhost:8000 — ready to open!"
+      )
+    } else {
+      tags$div(
+        style="background:#f8d7da;border-radius:6px;padding:8px 12px;margin-bottom:10px;font-size:12.5px;color:#721c24;",
+        "🔴 WebODM not detected at localhost:8000.",
+        tags$br(),
+        tags$span(style="font-weight:400;font-size:11.5px;",
+          "Start WebODM with: ", tags$code("./webodm.sh start"),
+          " then refresh this page.")
+      )
+    }
+  })
+
+  output$webodm_iframe_ui <- renderUI({
+    ok <- tryCatch(webodm_reachable(), error=function(e) FALSE)
+    if (isTRUE(ok)) {
+      tags$div(
+        tags$div(
+          style="background:#c7f9cc;padding:8px 14px;border-radius:6px;margin-bottom:10px;font-size:12.5px;color:#1b4332;font-weight:600;",
+          "🟢 WebODM is running — loaded below."
+        ),
+        tags$iframe(
+          src     = "http://localhost:8000",
+          width   = "100%",
+          height  = "750px",
+          style   = "border:none;border-radius:8px;box-shadow:0 3px 16px rgba(0,0,0,0.15);"
+        )
+      )
+    } else {
+      tags$div(
+        style=paste0(
+          "background:#f8f9fa;border:2px dashed #dee2e6;border-radius:10px;",
+          "padding:40px;text-align:center;color:#888;"
+        ),
+        tags$div(style="font-size:48px;margin-bottom:12px;","🛩️"),
+        tags$h4(style="color:#555;margin-bottom:8px;","WebODM not running"),
+        tags$p(style="font-size:13px;max-width:500px;margin:0 auto 16px;",
+          "Start WebODM locally using Docker, then refresh this page. ",
+          "The interface will appear here automatically once WebODM is running at ",
+          tags$code("http://localhost:8000"), "."),
+        tags$div(style="display:flex;justify-content:center;gap:12px;flex-wrap:wrap;",
+          tags$a(href="https://webodm.net", target="_blank",
+            class="btn btn-success",
+            style="font-weight:600;",
+            "☁️ Use WebODM Cloud instead"),
+          tags$a(href="https://github.com/OpenDroneMap/WebODM#getting-started",
+            target="_blank", class="btn btn-primary",
+            style="font-weight:600;",
+            "📖 WebODM Installation Guide")
+        )
+      )
+    }
   })
 
 } # end server
