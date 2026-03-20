@@ -154,17 +154,6 @@ All installed automatically by `install_packages.R`.
 
 ---
 
-## File Size Recommendations for shinyapps.io
-
-shinyapps.io has a 500 MB upload limit per file. For large field mosaics:
-
-1. **Compress**: Export as GeoTIFF with `COMPRESS=LZW` (3–5× smaller)
-2. **Resample**: Reduce to 5–10 cm/px in QGIS
-3. **Clip**: Crop to field boundary before uploading
-
-For unrestricted local use, files up to 4 GB are supported.
-
----
 
 ## Citation
 
