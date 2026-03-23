@@ -2576,10 +2576,9 @@ server <- function(input, output, session) {
 
             rv$merged <- if (!is.null(rv$meta)) {
               # ── Smart ID matching ──────────────────────────────────────────
-              # 1. Check explicit "PLOT" column
-              # 2. Scan every meta column for values that overlap ext_df$PlotID
-              # 3. Fall back to positional (row-order) join so index values are
-              #    never lost even when no ID column matches.
+              # PlotID (integer, 1-based from the shape grid) must always be
+              # the FIRST column of rv$merged so build_hover() can match map
+              # plots to metadata rows correctly.
               plot_ids_ref <- as.character(ext_df$PlotID)
 
               find_id_col <- function(meta, ref) {
@@ -2594,14 +2593,21 @@ server <- function(input, output, session) {
               id_col <- find_id_col(rv$meta, plot_ids_ref)
 
               if (!is.null(id_col)) {
-                # Normal key-based merge
-                merge(rv$meta, ext_df, by.x=id_col, by.y="PlotID", all.x=TRUE)
+                # Key-based merge then re-attach PlotID as first column
+                merged_tmp <- merge(rv$meta, ext_df, by.x=id_col, by.y="PlotID", all.x=TRUE)
+                pid_vec <- ext_df$PlotID[match(as.character(merged_tmp[[id_col]]),
+                                               as.character(ext_df$PlotID))]
+                merged_tmp$PlotID <- pid_vec
+                merged_tmp[, c("PlotID", setdiff(names(merged_tmp), "PlotID")), drop=FALSE]
               } else {
-                # Positional join: meta rows align 1-to-1 with extracted plot rows
+                # Positional join: CSV rows map 1-to-1 with shape grid order
                 n_common <- min(nrow(rv$meta), nrow(ext_df))
-                cbind(rv$meta[seq_len(n_common), , drop=FALSE],
-                      ext_df[seq_len(n_common),
-                             setdiff(names(ext_df), "PlotID"), drop=FALSE])
+                meta_sub <- rv$meta[seq_len(n_common), , drop=FALSE]
+                ext_sub  <- ext_df[seq_len(n_common), , drop=FALSE]
+                idx_cols <- setdiff(names(ext_sub), "PlotID")
+                cbind(PlotID = ext_sub$PlotID,
+                      meta_sub,
+                      ext_sub[, idx_cols, drop=FALSE])
               }
             } else ext_df
             extra_msg <- sprintf("  📋 Extracted means for %d plots. Raw bands included.", nrow(ext_df))
