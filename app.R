@@ -2585,11 +2585,11 @@ server <- function(input, output, session) {
                 if ("PLOT" %in% names(meta)) return("PLOT")
                 for (col in names(meta)) {
                   vals <- as.character(meta[[col]])
-                  if (length(intersect(vals, ref)) > 0) return(col)
+                  if (anyDuplicated(vals) > 0) next
+                  if (length(intersect(vals, ref)) / length(ref) >= 0.8) return(col)
                 }
                 return(NULL)
               }
-
               id_col <- find_id_col(rv$meta, plot_ids_ref)
 
               if (!is.null(id_col)) {
