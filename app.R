@@ -2158,6 +2158,15 @@ server <- function(input, output, session) {
         }, error=function(e) msgs <<- c(msgs, paste("❌ CSV:", e$message)))
       }
 
+      # ── CSV-only mode: if no raster was loaded but a CSV was, use it directly ──
+      if (is.null(rv$mosaic) && !is.null(rv$meta)) {
+        rv$merged <- rv$meta
+        num_cols  <- sum(sapply(rv$meta, is.numeric))
+        msgs <- c(msgs, sprintf(
+          "📊 CSV-only mode: %d numeric columns available for analysis (Statistics, PCA, Clustering, etc.).",
+          num_cols))
+      }
+
       incProgress(0.1, "Done")
     })
     output$load_log <- renderText(paste(msgs, collapse="\n"))
@@ -2566,9 +2575,34 @@ server <- function(input, output, session) {
             }
 
             rv$merged <- if (!is.null(rv$meta)) {
-              # find the ID column in meta (first column, or "PLOT" if present)
-              id_col <- if ("PLOT" %in% names(rv$meta)) "PLOT" else names(rv$meta)[1]
-              merge(rv$meta, ext_df, by.x=id_col, by.y="PlotID", all.x=TRUE)
+              # ── Smart ID matching ──────────────────────────────────────────
+              # 1. Check explicit "PLOT" column
+              # 2. Scan every meta column for values that overlap ext_df$PlotID
+              # 3. Fall back to positional (row-order) join so index values are
+              #    never lost even when no ID column matches.
+              plot_ids_ref <- as.character(ext_df$PlotID)
+
+              find_id_col <- function(meta, ref) {
+                if ("PLOT" %in% names(meta)) return("PLOT")
+                for (col in names(meta)) {
+                  vals <- as.character(meta[[col]])
+                  if (length(intersect(vals, ref)) > 0) return(col)
+                }
+                return(NULL)
+              }
+
+              id_col <- find_id_col(rv$meta, plot_ids_ref)
+
+              if (!is.null(id_col)) {
+                # Normal key-based merge
+                merge(rv$meta, ext_df, by.x=id_col, by.y="PlotID", all.x=TRUE)
+              } else {
+                # Positional join: meta rows align 1-to-1 with extracted plot rows
+                n_common <- min(nrow(rv$meta), nrow(ext_df))
+                cbind(rv$meta[seq_len(n_common), , drop=FALSE],
+                      ext_df[seq_len(n_common),
+                             setdiff(names(ext_df), "PlotID"), drop=FALSE])
+              }
             } else ext_df
             extra_msg <- sprintf("  📋 Extracted means for %d plots. Raw bands included.", nrow(ext_df))
           } else {
