@@ -2207,25 +2207,51 @@ server <- function(input, output, session) {
 
   # ── Safe RGB display helper ───────────────────────────────────
   # Handles multispectral images where values may be:
-  #   - Already in 0-1 float reflectance (very dark with plain stretch="lin")
-  #   - Containing negatives from atmospheric correction
-  #   - Tiny means (~0.02-0.10) that map to near-black with linear stretch
-  # Strategy: clamp negatives to 0, then apply 2%-98% percentile stretch per band
+  #   - Float32 reflectance (0-1 range, very dark with plain linear stretch)
+  #   - Negative values from atmospheric correction
+  #   - Large masked/nodata areas (zeros ~82% of pixels) dominating percentile calc
+  #   - Alpha channel present as last band (e.g. ODM outputs band 5 = alpha=255)
+  # Strategy:
+  #   1. Auto-detect alpha/nodata mask (band with only 1-2 unique values)
+  #   2. Build valid-pixel mask; clamp negatives to 0
+  #   3. Compute p2/p98 stretch ONLY on valid (non-masked) pixels
+  #   4. Set masked areas to NA so terra renders white background
   safe_plotRGB <- function(r, r_idx, g_idx, b_idx, main="", ...) {
-    prep_band <- function(lyr) {
-      v <- terra::values(lyr)
-      v[!is.finite(v)] <- NA
-      v[v < 0] <- 0          # clamp negatives (atmospheric correction artefacts)
-      p2  <- quantile(v, 0.02, na.rm=TRUE)
-      p98 <- quantile(v, 0.98, na.rm=TRUE)
-      if (is.na(p2) || is.na(p98) || p98 <= p2) {
-        p2  <- min(v, na.rm=TRUE)
-        p98 <- max(v, na.rm=TRUE)
+    nb <- terra::nlyr(r)
+    valid_mask <- NULL
+    tryCatch({
+      for (ai in seq_len(nb)) {
+        av     <- as.vector(terra::values(r[[ai]]))
+        av_fin <- av[is.finite(av)]
+        uv     <- unique(av_fin)
+        if (length(uv) <= 2 && max(uv, na.rm=TRUE) >= 1) {
+          valid_mask <- av > 0
+          break
+        }
       }
-      if (p98 <= p2) { p2 <- 0; p98 <- 1 }
-      v_s <- (v - p2) / (p98 - p2)
-      v_s[v_s < 0] <- 0
-      v_s[v_s > 1] <- 1
+    }, error=function(e) NULL)
+    if (is.null(valid_mask)) {
+      rv_b       <- as.vector(terra::values(r[[r_idx]]))
+      valid_mask <- is.finite(rv_b) & rv_b != 0
+    }
+    prep_band <- function(lyr) {
+      v           <- as.vector(terra::values(lyr))
+      v[!is.finite(v)] <- NA
+      v_valid     <- v[valid_mask & !is.na(v)]
+      v_valid[v_valid < 0] <- 0
+      if (length(v_valid) < 10) return(lyr)
+      p2  <- quantile(v_valid, 0.02, na.rm=TRUE)
+      p98 <- quantile(v_valid, 0.98, na.rm=TRUE)
+      if (!is.finite(p2) || !is.finite(p98) || p98 <= p2) {
+        p2  <- min(v_valid, na.rm=TRUE)
+        p98 <- max(v_valid, na.rm=TRUE)
+      }
+      if (!is.finite(p98) || p98 <= p2) { p2 <- 0; p98 <- 1 }
+      v[v < 0] <- 0
+      v_s           <- (v - p2) / (p98 - p2)
+      v_s[v_s < 0]  <- 0
+      v_s[v_s > 1]  <- 1
+      v_s[!valid_mask] <- NA
       terra::setValues(lyr, v_s)
     }
     stk <- terra::rast(list(
@@ -2233,7 +2259,8 @@ server <- function(input, output, session) {
       prep_band(r[[g_idx]]),
       prep_band(r[[b_idx]])
     ))
-    terra::plotRGB(stk, r=1, g=2, b=3, main=main, stretch="lin", ...)
+    terra::plotRGB(stk, r=1, g=2, b=3, main=main, stretch="lin",
+                  colNA="white", bgalpha=0, ...)
   }
 
   # ── Mosaic Plot ──────────────────────────────────────────────
