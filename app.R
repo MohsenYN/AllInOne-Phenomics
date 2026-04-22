@@ -2205,12 +2205,43 @@ server <- function(input, output, session) {
     datatable(rv$meta, options=list(pageLength=8, scrollX=TRUE), rownames=FALSE)
   })
 
+  # ── Safe RGB display helper ───────────────────────────────────
+  # Handles multispectral images where values may be:
+  #   - Already in 0-1 float reflectance (very dark with plain stretch="lin")
+  #   - Containing negatives from atmospheric correction
+  #   - Tiny means (~0.02-0.10) that map to near-black with linear stretch
+  # Strategy: clamp negatives to 0, then apply 2%-98% percentile stretch per band
+  safe_plotRGB <- function(r, r_idx, g_idx, b_idx, main="", ...) {
+    prep_band <- function(lyr) {
+      v <- terra::values(lyr)
+      v[!is.finite(v)] <- NA
+      v[v < 0] <- 0          # clamp negatives (atmospheric correction artefacts)
+      p2  <- quantile(v, 0.02, na.rm=TRUE)
+      p98 <- quantile(v, 0.98, na.rm=TRUE)
+      if (is.na(p2) || is.na(p98) || p98 <= p2) {
+        p2  <- min(v, na.rm=TRUE)
+        p98 <- max(v, na.rm=TRUE)
+      }
+      if (p98 <= p2) { p2 <- 0; p98 <- 1 }
+      v_s <- (v - p2) / (p98 - p2)
+      v_s[v_s < 0] <- 0
+      v_s[v_s > 1] <- 1
+      terra::setValues(lyr, v_s)
+    }
+    stk <- terra::rast(list(
+      prep_band(r[[r_idx]]),
+      prep_band(r[[g_idx]]),
+      prep_band(r[[b_idx]])
+    ))
+    terra::plotRGB(stk, r=1, g=2, b=3, main=main, stretch="lin", ...)
+  }
+
   # ── Mosaic Plot ──────────────────────────────────────────────
   plot_mosaic <- function(r, title="Mosaic") {
     b <- get_bands()
     nb <- terra::nlyr(r)
     if (nb >= 3) {
-      terra::plotRGB(r, r=b$r, g=b$g, b=b$b, main=title, stretch="lin")
+      safe_plotRGB(r, b$r, b$g, b$b, main=title)
     } else {
       terra::plot(r[[1]], main=title, col=viridis::viridis(256))
     }
@@ -2391,7 +2422,7 @@ server <- function(input, output, session) {
       paste0("Field Grid — ", nrow(rv$shape), " plots  |  Plot 1 = top-left,  numbered left→right, top→bottom")
 
     if (terra::nlyr(r) >= 3) {
-      terra::plotRGB(r, r=b$r, g=b$g, b=b$b, main=main_title, stretch="lin")
+      safe_plotRGB(r, b$r, b$g, b$b, main=main_title)
     } else {
       terra::plot(r[[1]], main=main_title, col=viridis::viridis(256))
     }
@@ -4904,8 +4935,8 @@ server <- function(input, output, session) {
               r  <- rv$mosaic
               b  <- get_bands()
               if (terra::nlyr(r) >= 3) {
-                terra::plotRGB(r, r=b$r, g=b$g, b=b$b,
-                               main="Drone Mosaic — Original Image", stretch="lin",
+                safe_plotRGB(r, b$r, b$g, b$b,
+                               main="Drone Mosaic — Original Image",
                                mar=c(2,2,2,2))
               } else {
                 terra::plot(r[[1]], main="Drone Mosaic (Band 1)",
@@ -4932,9 +4963,9 @@ server <- function(input, output, session) {
               b   <- get_bands()
               shp <- rv$shape
               if (terra::nlyr(r) >= 3) {
-                terra::plotRGB(r, r=b$r, g=b$g, b=b$b,
+                safe_plotRGB(r, b$r, b$g, b$b,
                                main=paste0("Field Layout — ", n_plots, " Plots  |  Plot 1 = top-left, left→right, top→bottom"),
-                               stretch="lin", mar=c(2,2,3,2))
+                               mar=c(2,2,3,2))
               } else {
                 terra::plot(r[[1]], main=paste0("Field Layout — ",n_plots," Plots"),
                             col=viridis::viridis(256), mar=c(2,2,3,2))
@@ -5964,4 +5995,3 @@ server <- function(input, output, session) {
 # ── Launch ──────────────────────────────────────────────────────
 # Resource path registered at startup (works locally AND on shinyapps.io)
 shinyApp(ui = ui, server = server)
-
